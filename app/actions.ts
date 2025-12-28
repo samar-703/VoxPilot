@@ -61,30 +61,30 @@ export async function analyzeCommand(
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    const systemPrompt = `You are VoxPilot, an AI assistant for SRE infrastructure operations.
-Analyze the user's voice command and respond with JSON.
+    const systemPrompt = `You are VoxPilot, a voice-controlled SRE assistant.
+Respond ONLY with valid JSON, no other text.
 
-Available services: gateway, auth, database, cache
-Available actions: restart, scale, diagnose, check-status, rollback, deploy, stop, kill
+Services: gateway, auth, database, cache
+Service actions: restart, scale, diagnose, check-status, rollback, deploy, stop, kill
+Dashboard actions: show-all, show-critical, show-warnings, clear-logs, go-home
 
-CRITICAL: For destructive operations (restart, stop, kill, rollback, deploy, scale), set risk to "HIGH".
-For read-only operations (check-status, diagnose, logs), set risk to "LOW".
-For greetings or unclear commands, set risk to "NONE".
+SPEECH RECOGNITION FIX (CRITICAL - always apply):
+- "earth", "off", "all", "path", "oth" → "auth"
+- "cash", "catch" → "cache"  
+- "data", "date" → "database"
+- "gate way", "getaway" → "gateway"
 
-Respond with this exact JSON structure:
-{
-  "intent": "Brief description of what user wants",
-  "service": "service-name or null",
-  "action": "action-name or null",
-  "risk": "HIGH" | "LOW" | "NONE",
-  "response": "Your response to the user (under 15 words)",
-  "confirmation": "Warning message for HIGH risk actions (under 15 words)"
-}
+Risk levels:
+- HIGH: restart, stop, kill, rollback, deploy, scale
+- LOW: check-status, diagnose, logs, show-all, show-critical, clear-logs, go-home
+- NONE: greetings, unclear
 
-Examples:
-- "restart the auth service" → HIGH risk, requires confirmation
-- "what's the status of database" → LOW risk, immediate response
-- "hello" → NONE risk, greeting response`;
+KEEP RESPONSES VERY SHORT (saves TTS quota):
+- "response": max 6 words
+- "confirmation": max 8 words
+
+JSON only:
+{"intent":"...","service":"...or null","action":"...or null","risk":"HIGH|LOW|NONE","response":"short","confirmation":"only for HIGH"}`;
 
     console.log("Sending to Gemini API...");
     const result = await model.generateContent([
@@ -172,7 +172,7 @@ export async function executeAction(
       }
     }
 
-    const successMessage = `${action} completed on ${service}. Service is now operational.`;
+    const successMessage = `${service} ${action} complete.`;
     const audio = await generateSpeech(successMessage);
 
     return {
@@ -320,7 +320,7 @@ async function localCommandParser(transcript: string): Promise<ActionResult> {
     console.log(
       `🚨 HIGH RISK: ${foundDestructive} ${foundService} - requires confirmation`
     );
-    const confirmationText = `Warning: This will ${foundDestructive} the ${foundService} service. Say Yes to confirm.`;
+    const confirmationText = `${foundDestructive} ${foundService}? Say yes to confirm.`;
     const audio = await generateSpeech(confirmationText);
     return {
       success: true,
@@ -341,7 +341,7 @@ async function localCommandParser(transcript: string): Promise<ActionResult> {
     const state = serviceStates[foundService];
     const status = state?.status || "unknown";
     console.log(`LOW RISK: Check status of ${foundService}`);
-    const responseText = `${foundService} is ${status}. CPU ${state?.cpu}%, Memory ${state?.memory}%.`;
+    const responseText = `${foundService} ${status}. CPU ${state?.cpu}%.`;
     const audio = await generateSpeech(responseText);
     return {
       success: true,
@@ -359,7 +359,7 @@ async function localCommandParser(transcript: string): Promise<ActionResult> {
 
   // Greeting detection
   if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
-    const responseText = "VoxPilot ready. How can I assist with your infrastructure?";
+    const responseText = "VoxPilot ready.";
     const audio = await generateSpeech(responseText);
     return {
       success: true,
@@ -375,7 +375,7 @@ async function localCommandParser(transcript: string): Promise<ActionResult> {
     };
   }
 
-  const responseText = "Specify a service: gateway, auth, database, or cache. And an action like restart or check status.";
+  const responseText = "Specify a service and action.";
   const audio = await generateSpeech(responseText);
   return {
     success: true,

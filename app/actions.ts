@@ -200,51 +200,55 @@ async function generateSpeech(text: string): Promise<string | undefined> {
 
   if (!apiKey) {
     console.warn(
-      "ElevenLabs API key not configured - using browser TTS fallback"
+      "⚠️ ElevenLabs API key not configured - using browser TTS fallback"
     );
     return undefined;
   }
 
   try {
-    console.log("Generating speech with ElevenLabs...");
+    console.log("🔊 Generating speech with ElevenLabs...");
+    console.log("🔑 API Key present:", apiKey ? `${apiKey.substring(0, 8)}...` : "MISSING");
+    
     // Use Rachel voice (21m00Tcm4TlvDq8ikWAM) - professional female voice
+    // Using eleven_multilingual_v2 which is available on free tier
     const response = await fetch(
       "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
       {
         method: "POST",
         headers: {
+          "Accept": "audio/mpeg",
           "Content-Type": "application/json",
           "xi-api-key": apiKey,
         },
         body: JSON.stringify({
           text,
-          model_id: "eleven_turbo_v2_5",
+          model_id: "eleven_multilingual_v2",
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
-            style: 0.0,
-            use_speaker_boost: true,
           },
         }),
       }
     );
 
     if (!response.ok) {
+      const errorText = await response.text();
       console.error(
         "❌ ElevenLabs error:",
         response.status,
+        errorText,
         "- using browser TTS fallback"
       );
       return undefined;
     }
 
-    console.log("ElevenLabs audio generated successfully");
+    console.log("✅ ElevenLabs audio generated successfully");
     const audioBuffer = await response.arrayBuffer();
     const base64Audio = Buffer.from(audioBuffer).toString("base64");
     return `data:audio/mpeg;base64,${base64Audio}`;
   } catch (error) {
     console.error(
-      "ElevenLabs TTS error:",
+      "❌ ElevenLabs TTS error:",
       error,
       "- using browser TTS fallback"
     );

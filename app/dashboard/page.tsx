@@ -111,6 +111,30 @@ export default function DashboardPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
   const isListeningForConfirmation = useRef(false);
+  const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingActionRef = useRef<{ service: string; action: string } | null>(
+    null
+  );
+
+  // Cancel confirmation mode
+  const cancelConfirmation = useCallback(() => {
+    isListeningForConfirmation.current = false;
+    pendingActionRef.current = null;
+    if (confirmationTimeoutRef.current) {
+      clearTimeout(confirmationTimeoutRef.current);
+      confirmationTimeoutRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        // ignore
+      }
+    }
+    setPendingAction(null);
+    setConfirmationText(undefined);
+    setOrbState("idle");
+  }, []);
 
   // Add log entry
   const addLog = useCallback((type: LogEntry["type"], message: string) => {
@@ -303,10 +327,12 @@ export default function DashboardPage() {
         // Handle based on risk level
         if (analysis.risk === "HIGH" && analysis.service && analysis.action) {
           // High risk - need confirmation
-          setPendingAction({
+          const actionData = {
             service: analysis.service,
             action: analysis.action,
-          });
+          };
+          setPendingAction(actionData);
+          pendingActionRef.current = actionData; // Also set ref for closure access
           setConfirmationText(
             analysis.confirmation || `${analysis.action} ${analysis.service}?`
           );
@@ -325,6 +351,17 @@ export default function DashboardPage() {
 
           // Set up for confirmation listening
           isListeningForConfirmation.current = true;
+
+          // Set timeout to auto-cancel after 15 seconds
+          if (confirmationTimeoutRef.current) {
+            clearTimeout(confirmationTimeoutRef.current);
+          }
+          confirmationTimeoutRef.current = setTimeout(() => {
+            if (isListeningForConfirmation.current) {
+              addLog("system", "Confirmation timeout - cancelled");
+              cancelConfirmation();
+            }
+          }, 15000);
 
           // Start listening for confirmation after a short delay
           setTimeout(() => {
@@ -346,7 +383,7 @@ export default function DashboardPage() {
         setOrbState("idle");
       }
     },
-    [addLog, playAudio]
+    [addLog, playAudio, cancelConfirmation, services]
   );
 
   // Handle confirmation response
@@ -355,33 +392,60 @@ export default function DashboardPage() {
       const lower = transcript.toLowerCase();
       isListeningForConfirmation.current = false;
 
+      // Stop any existing recognition immediately
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      // Clear the confirmation timeout
+      if (confirmationTimeoutRef.current) {
+        clearTimeout(confirmationTimeoutRef.current);
+        confirmationTimeoutRef.current = null;
+      }
+
+      // Get pending action from ref (avoids stale closure)
+      const currentPendingAction = pendingActionRef.current;
+
+      console.log("🎤 Confirmation received:", transcript);
+      console.log("📋 Pending action:", currentPendingAction);
+
+      addLog("user", `"${transcript}"`);
+
       if (
         lower.includes("yes") ||
         lower.includes("confirm") ||
-        lower.includes("proceed")
+        lower.includes("proceed") ||
+        lower.includes("yeah") ||
+        lower.includes("yep") ||
+        lower.includes("do it") ||
+        lower.includes("go ahead")
       ) {
         // Execute the action
-        if (pendingAction) {
+        if (currentPendingAction) {
           addLog(
             "action",
-            `Executing ${pendingAction.action} on ${pendingAction.service}...`
+            `Executing ${currentPendingAction.action} on ${currentPendingAction.service}...`
           );
           setOrbState("processing");
 
           try {
             // Set to restarting state
-            updateServiceStatus(pendingAction.service, "restarting");
+            updateServiceStatus(currentPendingAction.service, "restarting");
 
             const result = await executeAction(
-              pendingAction.service,
-              pendingAction.action
+              currentPendingAction.service,
+              currentPendingAction.action
             );
 
             if (result.success) {
               addLog("success", result.message);
 
               // Update to healthy
-              updateServiceStatus(pendingAction.service, "healthy", {
+              updateServiceStatus(currentPendingAction.service, "healthy", {
                 cpu: Math.floor(Math.random() * 30) + 20,
                 memory: Math.floor(Math.random() * 30) + 30,
                 latency: Math.floor(Math.random() * 30) + 10,
@@ -401,6 +465,10 @@ export default function DashboardPage() {
             setOrbState("speaking");
             await playAudio(undefined, "Action execution failed");
           }
+        } else {
+          addLog("error", "No pending action found");
+          setOrbState("speaking");
+          await playAudio(undefined, "No action pending.");
         }
       } else if (
         lower.includes("no") ||
@@ -416,11 +484,12 @@ export default function DashboardPage() {
         await playAudio(undefined, "Cancelled.");
       }
 
+      pendingActionRef.current = null;
       setPendingAction(null);
       setConfirmationText(undefined);
       setOrbState("idle");
     },
-    [pendingAction, addLog, playAudio, updateServiceStatus]
+    [addLog, playAudio, updateServiceStatus]
   );
 
   // Speech recognition setup
@@ -487,10 +556,12 @@ export default function DashboardPage() {
           if (event.error !== "no-speech" && event.error !== "aborted") {
             addLog("error", `Voice error: ${event.error}`);
           }
-          // If we're in confirmation mode and got an error, stay in confirming state
+          // If we're in confirmation mode and got no-speech, we'll restart in onend
+          // For other errors in non-confirmation mode, go to idle
           if (!forConfirmation && !isListeningForConfirmation.current) {
             setOrbState("idle");
           }
+          // no-speech error will trigger onend which will restart if in confirmation mode
         };
 
         recognition.onend = () => {
@@ -499,8 +570,21 @@ export default function DashboardPage() {
             forConfirmation,
             isListeningForConfirmation.current
           );
-          // Only reset to idle if we're not in confirmation mode
-          if (!forConfirmation && !isListeningForConfirmation.current) {
+          // If we're in confirmation mode and didn't get a result, restart listening
+          if (forConfirmation || isListeningForConfirmation.current) {
+            console.log("🎤 Restarting confirmation listening...");
+            // Restart listening after a brief delay
+            setTimeout(() => {
+              if (isListeningForConfirmation.current) {
+                try {
+                  recognition.start();
+                  console.log("🎤 Restarted confirmation listening");
+                } catch (e) {
+                  console.error("Failed to restart recognition:", e);
+                }
+              }
+            }, 300);
+          } else {
             if (orbState === "listening") {
               setOrbState("idle");
             }
@@ -533,12 +617,22 @@ export default function DashboardPage() {
       }
       setOrbState("idle");
     } else if (orbState === "confirming") {
-      // Allow clicking to re-enable listening in confirmation mode
-      startListening(true);
+      // Click again to restart listening for confirmation
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // ignore
+        }
+      }
+      // Short delay then restart
+      setTimeout(() => {
+        startListening(true);
+      }, 200);
     }
   }, [orbState, startListening]);
 
-  // Cleanup
+  // Cleanup and keyboard shortcuts
   useEffect(() => {
     // Load voices on mount (needed for some browsers)
     if (typeof window !== "undefined" && window.speechSynthesis) {
@@ -548,7 +642,40 @@ export default function DashboardPage() {
       };
     }
 
+    // Keyboard shortcuts
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      // Space or Enter to start listening (when idle)
+      if ((e.code === "Space" || e.code === "Enter") && orbState === "idle") {
+        e.preventDefault();
+        startListening(false);
+      }
+
+      // Escape to cancel
+      if (e.code === "Escape") {
+        if (orbState === "confirming") {
+          cancelConfirmation();
+          addLog("system", "Cancelled via keyboard");
+        } else if (orbState === "listening") {
+          if (recognitionRef.current) {
+            recognitionRef.current.stop();
+          }
+          setOrbState("idle");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
     return () => {
+      window.removeEventListener("keydown", handleKeyDown);
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
@@ -556,7 +683,27 @@ export default function DashboardPage() {
         window.speechSynthesis.cancel();
       }
     };
-  }, []);
+  }, [orbState, startListening, cancelConfirmation, addLog]);
+
+  // Quick command handler (for buttons)
+  const executeQuickCommand = useCallback(
+    (command: string) => {
+      addLog("user", `"${command}"`);
+      handleVoiceCommand(command);
+    },
+    [addLog, handleVoiceCommand]
+  );
+
+  // Click on service card handler
+  const handleServiceClick = useCallback(
+    (serviceId: string) => {
+      const service = services.find((s) => s.id === serviceId);
+      if (service) {
+        executeQuickCommand(`check status of ${serviceId}`);
+      }
+    },
+    [services, executeQuickCommand]
+  );
 
   return (
     <div className="flex min-h-screen bg-black">
@@ -602,6 +749,50 @@ export default function DashboardPage() {
             </div>
           </motion.div>
 
+          {/* Quick Actions */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="flex flex-wrap gap-2"
+          >
+            <span className="text-xs text-neutral-500 mr-2 self-center">
+              Quick:
+            </span>
+            <button
+              onClick={() => executeQuickCommand("show critical services")}
+              className="px-3 py-1.5 text-xs rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors"
+            >
+              Show Critical
+            </button>
+            <button
+              onClick={() => executeQuickCommand("show warnings")}
+              className="px-3 py-1.5 text-xs rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/20 transition-colors"
+            >
+              Show Warnings
+            </button>
+            <button
+              onClick={() => executeQuickCommand("show all services")}
+              className="px-3 py-1.5 text-xs rounded-lg bg-neutral-500/10 border border-neutral-500/20 text-neutral-400 hover:bg-neutral-500/20 transition-colors"
+            >
+              Show All
+            </button>
+            <button
+              onClick={() =>
+                executeQuickCommand("check status of all services")
+              }
+              className="px-3 py-1.5 text-xs rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 transition-colors"
+            >
+              Status Report
+            </button>
+            <button
+              onClick={() => executeQuickCommand("clear logs")}
+              className="px-3 py-1.5 text-xs rounded-lg bg-neutral-500/10 border border-neutral-500/20 text-neutral-400 hover:bg-neutral-500/20 transition-colors"
+            >
+              Clear Logs
+            </button>
+          </motion.div>
+
           {/* Service cards grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <AnimatePresence mode="popLayout">
@@ -616,6 +807,8 @@ export default function DashboardPage() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.8 }}
                     transition={{ delay: index * 0.1 }}
+                    onClick={() => handleServiceClick(service.id)}
+                    className="cursor-pointer"
                   >
                     <HealthCard
                       name={service.name}
@@ -640,6 +833,28 @@ export default function DashboardPage() {
             <TerminalLogs logs={logs} />
           </motion.div>
 
+          {/* Keyboard shortcuts hint */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.6 }}
+            className="flex items-center justify-center gap-4 text-[10px] text-neutral-600"
+          >
+            <span>
+              <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 font-mono">
+                Space
+              </kbd>{" "}
+              to speak
+            </span>
+            <span>
+              <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 font-mono">
+                Esc
+              </kbd>{" "}
+              to cancel
+            </span>
+            <span>Click service card for status</span>
+          </motion.div>
+
           {/* Voice status indicator */}
           <AnimatePresence>
             {orbState !== "idle" && (
@@ -653,7 +868,7 @@ export default function DashboardPage() {
                   {orbState === "listening" && "Listening to your command..."}
                   {orbState === "processing" && "Processing command..."}
                   {orbState === "speaking" && "VoxPilot is responding..."}
-                  {orbState === "confirming" && "Waiting for confirmation..."}
+                  {orbState === "confirming" && "Say Yes or No to confirm..."}
                 </span>
               </motion.div>
             )}

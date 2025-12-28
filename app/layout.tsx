@@ -1,9 +1,52 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter",
+});
+
 export const metadata: Metadata = {
-  title: "VoxPilot - SRE Mission Control",
-  description: "Voice-controlled SRE Mission Control Dashboard",
+  title: "VoxPilot | Voice-Controlled Infrastructure",
+  description:
+    "Mission control for your infrastructure. Execute SRE operations with natural voice commands and AI-powered automation.",
+  keywords: [
+    "SRE",
+    "DevOps",
+    "voice control",
+    "infrastructure",
+    "AI automation",
+    "monitoring",
+    "operations",
+  ],
+  authors: [{ name: "VoxPilot Team" }],
+  creator: "VoxPilot",
+  openGraph: {
+    title: "VoxPilot | Voice-Controlled Infrastructure",
+    description:
+      "Mission control for your infrastructure. Execute SRE operations with natural voice commands.",
+    type: "website",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "VoxPilot | Voice-Controlled Infrastructure",
+    description:
+      "Mission control for your infrastructure. Execute SRE operations with natural voice commands.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#000000",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({
@@ -13,9 +56,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen bg-slate-950 text-slate-50 antialiased">
-        <div className="fixed inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950" />
-        <div className="relative z-10">{children}</div>
+      <body
+        className={`${inter.variable} font-sans bg-black text-white min-h-screen`}
+      >
+        <div className="relative min-h-screen noise">
+          {/* Global gradient backgrounds */}
+          <div className="fixed inset-0 bg-gradient-to-br from-purple-950/20 via-transparent to-indigo-950/20 pointer-events-none" />
+          <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-purple-500/5 blur-[120px] rounded-full pointer-events-none" />
+
+          {/* Content */}
+          <main className="relative z-10">{children}</main>
+        </div>
       </body>
     </html>
   );

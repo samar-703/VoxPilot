@@ -249,11 +249,13 @@ export default function DashboardPage() {
           setOrbState("speaking");
           await playAudio(result.audio, warningText);
 
-          setOrbState("confirming");
+          // Set up for confirmation listening
           isListeningForConfirmation.current = true;
 
-          // Start listening for confirmation
-          startListening();
+          // Start listening for confirmation after a short delay
+          setTimeout(() => {
+            startListening(true); // Pass true for confirmation mode
+          }, 500);
         } else {
           // Low risk or no action - just respond
           addLog("system", analysis.response);
@@ -348,76 +350,117 @@ export default function DashboardPage() {
   );
 
   // Speech recognition setup
-  const startListening = useCallback(() => {
-    if (typeof window === "undefined") return;
+  const startListening = useCallback(
+    (forConfirmation = false) => {
+      if (typeof window === "undefined") return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognitionAPI =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const SpeechRecognitionAPI =
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition;
 
-    if (!SpeechRecognitionAPI) {
-      addLog("error", "Speech recognition not supported");
-      return;
-    }
-
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-
-    const recognition = new SpeechRecognitionAPI();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = "en-US";
-
-    recognition.onstart = () => {
-      if (!isListeningForConfirmation.current) {
-        setOrbState("listening");
+      if (!SpeechRecognitionAPI) {
+        addLog("error", "Speech recognition not supported");
+        return;
       }
-      addLog("system", "Listening...");
-    };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-
-      if (isListeningForConfirmation.current) {
-        handleConfirmation(transcript);
-      } else {
-        handleVoiceCommand(transcript);
+      // Stop any existing recognition
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // Ignore errors when stopping
+        }
       }
-    };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event.error);
-      if (event.error !== "no-speech") {
-        addLog("error", `Voice error: ${event.error}`);
-      }
-      if (!isListeningForConfirmation.current) {
-        setOrbState("idle");
-      }
-    };
+      // Small delay to ensure previous recognition is fully stopped
+      setTimeout(() => {
+        const recognition = new SpeechRecognitionAPI();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = "en-US";
 
-    recognition.onend = () => {
-      if (orbState === "listening" && !isListeningForConfirmation.current) {
-        setOrbState("idle");
-      }
-    };
+        recognition.onstart = () => {
+          if (forConfirmation) {
+            setOrbState("confirming");
+            addLog("system", "Listening for confirmation...");
+          } else {
+            setOrbState("listening");
+            addLog("system", "Listening...");
+          }
+        };
 
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [orbState, addLog, handleVoiceCommand, handleConfirmation]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recognition.onresult = (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          console.log(
+            "🎤 Heard:",
+            transcript,
+            "| Confirmation mode:",
+            forConfirmation
+          );
+
+          if (forConfirmation || isListeningForConfirmation.current) {
+            handleConfirmation(transcript);
+          } else {
+            handleVoiceCommand(transcript);
+          }
+        };
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recognition.onerror = (event: any) => {
+          console.error("Speech recognition error:", event.error);
+          if (event.error !== "no-speech" && event.error !== "aborted") {
+            addLog("error", `Voice error: ${event.error}`);
+          }
+          // If we're in confirmation mode and got an error, stay in confirming state
+          if (!forConfirmation && !isListeningForConfirmation.current) {
+            setOrbState("idle");
+          }
+        };
+
+        recognition.onend = () => {
+          console.log(
+            "🎤 Recognition ended | Confirmation mode:",
+            forConfirmation,
+            isListeningForConfirmation.current
+          );
+          // Only reset to idle if we're not in confirmation mode
+          if (!forConfirmation && !isListeningForConfirmation.current) {
+            if (orbState === "listening") {
+              setOrbState("idle");
+            }
+          }
+        };
+
+        recognitionRef.current = recognition;
+
+        try {
+          recognition.start();
+          console.log(
+            "🎤 Started listening | Confirmation mode:",
+            forConfirmation
+          );
+        } catch (e) {
+          console.error("Failed to start recognition:", e);
+        }
+      }, 100);
+    },
+    [orbState, addLog, handleVoiceCommand, handleConfirmation]
+  );
 
   // Orb click handler
   const handleOrbClick = useCallback(() => {
     if (orbState === "idle") {
-      startListening();
+      startListening(false);
     } else if (orbState === "listening") {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
       setOrbState("idle");
+    } else if (orbState === "confirming") {
+      // Allow clicking to re-enable listening in confirmation mode
+      startListening(true);
     }
   }, [orbState, startListening]);
 

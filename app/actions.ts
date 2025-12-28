@@ -357,6 +357,36 @@ async function localCommandParser(transcript: string): Promise<ActionResult> {
     };
   }
 
+  // Status report for all services
+  if (foundRead && (lower.includes("all") || lower.includes("report") || lower.includes("overview"))) {
+    const criticalCount = Object.values(serviceStates).filter(s => s.status === "critical").length;
+    const warningCount = Object.values(serviceStates).filter(s => s.status === "warning").length;
+    const healthyCount = Object.values(serviceStates).filter(s => s.status === "healthy").length;
+    
+    let responseText = "";
+    if (criticalCount > 0) {
+      responseText = `${criticalCount} critical, ${warningCount} warnings, ${healthyCount} healthy.`;
+    } else if (warningCount > 0) {
+      responseText = `${warningCount} warnings, ${healthyCount} healthy. No critical.`;
+    } else {
+      responseText = `All ${healthyCount} services healthy.`;
+    }
+    
+    const audio = await generateSpeech(responseText);
+    return {
+      success: true,
+      message: responseText,
+      audio,
+      analysis: {
+        intent: "Status report",
+        service: null,
+        action: "check-status",
+        risk: "LOW",
+        response: responseText,
+      },
+    };
+  }
+
   // Greeting detection
   if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
     const responseText = "VoxPilot ready.";

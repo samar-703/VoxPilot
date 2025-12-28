@@ -2,11 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  analyzeCommand,
-  executeAction,
-  type CommandAnalysis,
-} from "@/app/actions";
+import { analyzeCommand, executeAction } from "@/app/actions";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import {
   HealthCard,
@@ -854,25 +850,6 @@ export default function DashboardPage() {
             </span>
             <span>Click service card for status</span>
           </motion.div>
-
-          {/* Voice status indicator */}
-          <AnimatePresence>
-            {orbState !== "idle" && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 10 }}
-                className="fixed bottom-24 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-neutral-900/90 border border-neutral-800 backdrop-blur-sm"
-              >
-                <span className="text-sm text-neutral-300">
-                  {orbState === "listening" && "Listening to your command..."}
-                  {orbState === "processing" && "Processing command..."}
-                  {orbState === "speaking" && "VoxPilot is responding..."}
-                  {orbState === "confirming" && "Say Yes or No to confirm..."}
-                </span>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       </main>
 

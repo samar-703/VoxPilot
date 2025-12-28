@@ -2,156 +2,296 @@
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-interface ActionData {
-  action: "SCALE" | "RESTART" | "NONE";
-  target: string;
-  reply_text: string;
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || "");
+
+// Types
+export interface CommandAnalysis {
+  intent: string;
+  service: string | null;
+  action: string | null;
+  risk: "HIGH" | "LOW" | "NONE";
+  response: string;
+  confirmation?: string;
 }
 
-interface ProcessCommandResponse {
-  audio: string | null;
-  action_data: ActionData;
-  error?: string;
+export interface ActionResult {
+  success: boolean;
+  message: string;
+  audio?: string; // Base64 audio
+  analysis?: CommandAnalysis;
 }
 
-const SYSTEM_PROMPT = `You are VoxPilot, an AI assistant for SRE Mission Control. You help operators manage infrastructure services.
+// Service state (in production, this would be a database)
+const serviceStates: Record<
+  string,
+  {
+    status: "healthy" | "critical" | "warning" | "restarting";
+    cpu: number;
+    memory: number;
+    latency: number;
+  }
+> = {
+  gateway: { status: "healthy", cpu: 45, memory: 62, latency: 23 },
+  auth: { status: "critical", cpu: 92, memory: 87, latency: 450 },
+  database: { status: "healthy", cpu: 34, memory: 56, latency: 12 },
+  cache: { status: "warning", cpu: 78, memory: 81, latency: 89 },
+};
 
-Available services: Auth Service, Payment Service, Database Service.
+// Analyze voice command with Gemini
+export async function analyzeCommand(
+  transcript: string
+): Promise<ActionResult> {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-When the user gives a command, analyze it and respond with a JSON object:
+    const systemPrompt = `You are VoxPilot, an AI assistant for SRE infrastructure operations.
+Analyze the user's voice command and respond with JSON.
+
+Available services: gateway, auth, database, cache
+Available actions: restart, scale, diagnose, check-status, rollback, deploy, stop, kill
+
+CRITICAL: For destructive operations (restart, stop, kill, rollback, deploy, scale), set risk to "HIGH".
+For read-only operations (check-status, diagnose, logs), set risk to "LOW".
+For greetings or unclear commands, set risk to "NONE".
+
+Respond with this exact JSON structure:
 {
-  "action": "SCALE" | "RESTART" | "NONE",
-  "target": "<service name or empty string>",
-  "reply_text": "<brief confirmation, max 15 words>"
+  "intent": "Brief description of what user wants",
+  "service": "service-name or null",
+  "action": "action-name or null",
+  "risk": "HIGH" | "LOW" | "NONE",
+  "response": "Your response to the user (under 15 words)",
+  "confirmation": "Warning message for HIGH risk actions (under 15 words)"
 }
-
-Rules:
-- SCALE: User wants to scale up/down a service
-- RESTART: User wants to restart/recover a service
-- NONE: Greeting, question, or unrelated command
 
 Examples:
-- "restart the auth service" -> {"action": "RESTART", "target": "Auth Service", "reply_text": "Initiating restart of Auth Service now."}
-- "scale up payment" -> {"action": "SCALE", "target": "Payment Service", "reply_text": "Scaling up Payment Service resources."}
-- "hello" -> {"action": "NONE", "target": "", "reply_text": "Hello! I'm VoxPilot. How can I help you today?"}
-- "what's the status" -> {"action": "NONE", "target": "", "reply_text": "All systems displayed on dashboard. Any specific concerns?"}
-
-ONLY respond with valid JSON. No markdown, no code blocks.`;
-
-async function analyzeWithGemini(text: string): Promise<ActionData> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-
-  if (!apiKey) {
-    console.error("GOOGLE_API_KEY not configured");
-    return {
-      action: "NONE",
-      target: "",
-      reply_text: "API key not configured. Please check setup.",
-    };
-  }
-
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
-    });
+- "restart the auth service" → HIGH risk, requires confirmation
+- "what's the status of database" → LOW risk, immediate response
+- "hello" → NONE risk, greeting response`;
 
     const result = await model.generateContent([
-      { text: SYSTEM_PROMPT },
-      { text: `User command: "${text}"` },
+      systemPrompt,
+      `User command: "${transcript}"`,
     ]);
 
-    const response = result.response;
-    const responseText = response.text().trim();
+    const text = result.response.text();
 
-    // Clean up response - remove markdown code blocks if present
-    let cleanedResponse = responseText;
-    if (cleanedResponse.startsWith("```json")) {
-      cleanedResponse = cleanedResponse.slice(7);
-    } else if (cleanedResponse.startsWith("```")) {
-      cleanedResponse = cleanedResponse.slice(3);
+    // Parse JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return {
+        success: false,
+        message: "Failed to parse command analysis",
+      };
     }
-    if (cleanedResponse.endsWith("```")) {
-      cleanedResponse = cleanedResponse.slice(0, -3);
-    }
-    cleanedResponse = cleanedResponse.trim();
 
-    const parsed = JSON.parse(cleanedResponse) as ActionData;
+    const analysis: CommandAnalysis = JSON.parse(jsonMatch[0]);
+
+    // Generate audio for the response
+    let audio: string | undefined;
+
+    if (analysis.risk === "HIGH" && analysis.confirmation) {
+      // For HIGH risk, generate confirmation warning audio
+      audio = await generateSpeech(analysis.confirmation);
+    } else if (analysis.response) {
+      // For other responses, generate response audio
+      audio = await generateSpeech(analysis.response);
+    }
 
     return {
-      action: parsed.action || "NONE",
-      target: parsed.target || "",
-      reply_text: parsed.reply_text || "Command received.",
+      success: true,
+      message: analysis.response,
+      audio,
+      analysis,
     };
   } catch (error) {
-    console.error("Gemini API error:", error);
+    console.error("Gemini analysis error:", error);
+
+    // Fallback local parser
+    return localCommandParser(transcript);
+  }
+}
+
+// Execute confirmed action
+export async function executeAction(
+  service: string,
+  action: string
+): Promise<ActionResult> {
+  try {
+    // Simulate action execution
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // Update service state based on action
+    if (serviceStates[service]) {
+      switch (action) {
+        case "restart":
+          serviceStates[service].status = "healthy";
+          serviceStates[service].cpu = Math.floor(Math.random() * 30) + 20;
+          serviceStates[service].memory = Math.floor(Math.random() * 30) + 30;
+          serviceStates[service].latency = Math.floor(Math.random() * 30) + 10;
+          break;
+        case "stop":
+        case "kill":
+          serviceStates[service].status = "critical";
+          break;
+        case "scale":
+          serviceStates[service].cpu = Math.floor(
+            serviceStates[service].cpu * 0.7
+          );
+          serviceStates[service].memory = Math.floor(
+            serviceStates[service].memory * 0.8
+          );
+          break;
+      }
+    }
+
+    const successMessage = `${action} completed on ${service}. Service is now operational.`;
+    const audio = await generateSpeech(successMessage);
+
     return {
-      action: "NONE",
-      target: "",
-      reply_text: "Sorry, I couldn't process that command.",
+      success: true,
+      message: successMessage,
+      audio,
+    };
+  } catch (error) {
+    console.error("Action execution error:", error);
+    return {
+      success: false,
+      message: `Failed to ${action} ${service}`,
     };
   }
 }
 
-async function textToSpeech(text: string): Promise<string | null> {
-  const apiKey = process.env.ELEVEN_LABS_API_KEY;
+// Get current service states
+export async function getServiceStates() {
+  return serviceStates;
+}
+
+// Generate speech with ElevenLabs
+async function generateSpeech(text: string): Promise<string | undefined> {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
 
   if (!apiKey) {
-    console.error("ELEVEN_LABS_API_KEY not configured");
-    return null;
+    console.warn("ElevenLabs API key not configured");
+    return undefined;
   }
 
   try {
-    // Using Rachel voice - clear and professional
-    const voiceId = "21m00Tcm4TlvDq8ikWAM";
-
+    // Use Rachel voice (21m00Tcm4TlvDq8ikWAM) - professional female voice
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
       {
         method: "POST",
         headers: {
-          Accept: "audio/mpeg",
           "Content-Type": "application/json",
           "xi-api-key": apiKey,
         },
         body: JSON.stringify({
-          text: text,
+          text,
           model_id: "eleven_turbo_v2_5",
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
+            style: 0.0,
+            use_speaker_boost: true,
           },
         }),
       }
     );
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("ElevenLabs API error:", response.status, errorText);
-      return null;
+      console.error("ElevenLabs error:", response.status);
+      return undefined;
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-
-    return base64;
+    const audioBuffer = await response.arrayBuffer();
+    const base64Audio = Buffer.from(audioBuffer).toString("base64");
+    return `data:audio/mpeg;base64,${base64Audio}`;
   } catch (error) {
     console.error("ElevenLabs TTS error:", error);
-    return null;
+    return undefined;
   }
 }
 
-export async function processCommand(
-  text: string
-): Promise<ProcessCommandResponse> {
-  // Step 1: Analyze intent with Gemini
-  const actionData = await analyzeWithGemini(text);
+// Fallback local command parser
+function localCommandParser(transcript: string): ActionResult {
+  const lower = transcript.toLowerCase();
 
-  // Step 2: Convert response to speech with ElevenLabs
-  const audio = await textToSpeech(actionData.reply_text);
+  // Service detection
+  const services = ["gateway", "auth", "database", "cache"];
+  const foundService = services.find((s) => lower.includes(s));
+
+  // Action detection
+  const destructiveActions = [
+    "restart",
+    "stop",
+    "kill",
+    "rollback",
+    "deploy",
+    "scale",
+  ];
+  const readActions = ["status", "check", "diagnose", "health", "logs"];
+
+  const foundDestructive = destructiveActions.find((a) => lower.includes(a));
+  const foundRead = readActions.find((a) => lower.includes(a));
+
+  if (foundDestructive && foundService) {
+    return {
+      success: true,
+      message: `Ready to ${foundDestructive} ${foundService}. Confirm with "Yes".`,
+      analysis: {
+        intent: `${foundDestructive} ${foundService} service`,
+        service: foundService,
+        action: foundDestructive,
+        risk: "HIGH",
+        response: `Ready to ${foundDestructive} ${foundService}. Confirm with "Yes".`,
+        confirmation: `Warning: This will ${foundDestructive} the ${foundService} service. Say Yes to confirm.`,
+      },
+    };
+  }
+
+  if (foundRead && foundService) {
+    const state = serviceStates[foundService];
+    const status = state?.status || "unknown";
+    return {
+      success: true,
+      message: `${foundService} service is ${status}. CPU: ${state?.cpu}%, Memory: ${state?.memory}%.`,
+      analysis: {
+        intent: `Check ${foundService} status`,
+        service: foundService,
+        action: "check-status",
+        risk: "LOW",
+        response: `${foundService} is ${status}. CPU ${state?.cpu}%, Memory ${state?.memory}%.`,
+      },
+    };
+  }
+
+  // Greeting detection
+  if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
+    return {
+      success: true,
+      message: "VoxPilot ready. How can I assist with your infrastructure?",
+      analysis: {
+        intent: "Greeting",
+        service: null,
+        action: null,
+        risk: "NONE",
+        response: "VoxPilot ready. How can I assist with your infrastructure?",
+      },
+    };
+  }
 
   return {
-    audio,
-    action_data: actionData,
+    success: true,
+    message: "I understood your command. Specify a service and action.",
+    analysis: {
+      intent: "Unclear command",
+      service: null,
+      action: null,
+      risk: "NONE",
+      response:
+        "Specify a service (gateway, auth, database, cache) and action.",
+    },
   };
 }

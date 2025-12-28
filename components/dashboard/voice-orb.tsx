@@ -125,8 +125,10 @@ export function VoiceOrb({
             state === "confirming" && "text-red-400"
           )}
         >
-          {state === "listening" || state === "confirming" ? (
+          {state === "listening" ? (
             <IconMicrophoneOff size={24} />
+          ) : state === "confirming" ? (
+            <IconMicrophone size={24} />
           ) : (
             <IconMicrophone size={24} />
           )}
@@ -204,7 +206,7 @@ function getStateLabel(state: OrbState): string {
     case "speaking":
       return "Speaking";
     case "confirming":
-      return "Awaiting confirmation";
+      return "Say Yes or No";
     default:
       return "";
   }

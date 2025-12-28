@@ -122,19 +122,74 @@ export default function DashboardPage() {
     ]);
   }, []);
 
-  // Play audio
-  const playAudio = useCallback((audioData: string) => {
+  // Browser TTS fallback
+  const speakText = useCallback((text: string) => {
     return new Promise<void>((resolve) => {
-      if (audioRef.current) {
-        audioRef.current.src = audioData;
-        audioRef.current.onended = () => resolve();
-        audioRef.current.onerror = () => resolve();
-        audioRef.current.play().catch(() => resolve());
-      } else {
+      if (typeof window === "undefined" || !window.speechSynthesis) {
         resolve();
+        return;
       }
+
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+
+      // Try to find a good voice
+      const voices = window.speechSynthesis.getVoices();
+      const preferredVoice = voices.find(
+        (v) =>
+          v.name.includes("Google") ||
+          v.name.includes("Samantha") ||
+          v.lang.startsWith("en")
+      );
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+
+      window.speechSynthesis.speak(utterance);
     });
   }, []);
+
+  // Play audio (with browser TTS fallback)
+  const playAudio = useCallback(
+    (audioData: string | undefined, fallbackText?: string) => {
+      return new Promise<void>((resolve) => {
+        if (audioData && audioRef.current) {
+          audioRef.current.src = audioData;
+          audioRef.current.onended = () => resolve();
+          audioRef.current.onerror = () => {
+            // If audio fails, use browser TTS
+            if (fallbackText) {
+              speakText(fallbackText).then(resolve);
+            } else {
+              resolve();
+            }
+          };
+          audioRef.current.play().catch(() => {
+            // If play fails, use browser TTS
+            if (fallbackText) {
+              speakText(fallbackText).then(resolve);
+            } else {
+              resolve();
+            }
+          });
+        } else if (fallbackText) {
+          // No audio data, use browser TTS
+          speakText(fallbackText).then(resolve);
+        } else {
+          resolve();
+        }
+      });
+    },
+    [speakText]
+  );
 
   // Update service status
   const updateServiceStatus = useCallback(
@@ -187,11 +242,12 @@ export default function DashboardPage() {
             `HIGH RISK: ${analysis.action} on ${analysis.service}`
           );
 
-          // Play warning audio
-          if (result.audio) {
-            setOrbState("speaking");
-            await playAudio(result.audio);
-          }
+          // Play warning audio (with browser TTS fallback)
+          const warningText =
+            analysis.confirmation ||
+            `Warning: About to ${analysis.action} ${analysis.service}. Say yes to confirm.`;
+          setOrbState("speaking");
+          await playAudio(result.audio, warningText);
 
           setOrbState("confirming");
           isListeningForConfirmation.current = true;
@@ -202,10 +258,9 @@ export default function DashboardPage() {
           // Low risk or no action - just respond
           addLog("system", analysis.response);
 
-          if (result.audio) {
-            setOrbState("speaking");
-            await playAudio(result.audio);
-          }
+          // Play response audio (with browser TTS fallback)
+          setOrbState("speaking");
+          await playAudio(result.audio, analysis.response);
 
           setOrbState("idle");
         }
@@ -256,15 +311,19 @@ export default function DashboardPage() {
                 latency: Math.floor(Math.random() * 30) + 10,
               });
 
-              if (result.audio) {
-                setOrbState("speaking");
-                await playAudio(result.audio);
-              }
+              // Play success audio (with browser TTS fallback)
+              setOrbState("speaking");
+              await playAudio(result.audio, result.message);
             } else {
               addLog("error", result.message);
+              // Speak error
+              setOrbState("speaking");
+              await playAudio(undefined, result.message);
             }
           } catch (error) {
             addLog("error", "Action execution failed");
+            setOrbState("speaking");
+            await playAudio(undefined, "Action execution failed");
           }
         }
       } else if (
@@ -273,8 +332,12 @@ export default function DashboardPage() {
         lower.includes("abort")
       ) {
         addLog("system", "Action cancelled by user");
+        setOrbState("speaking");
+        await playAudio(undefined, "Action cancelled");
       } else {
         addLog("warning", "Unclear response, action cancelled");
+        setOrbState("speaking");
+        await playAudio(undefined, "Unclear response. Action cancelled.");
       }
 
       setPendingAction(null);
@@ -360,9 +423,20 @@ export default function DashboardPage() {
 
   // Cleanup
   useEffect(() => {
+    // Load voices on mount (needed for some browsers)
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices();
+      };
+    }
+
     return () => {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
+      }
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
       }
     };
   }, []);

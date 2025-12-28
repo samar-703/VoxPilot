@@ -1,0 +1,465 @@
+"use client";
+
+import { useState, useCallback, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  analyzeCommand,
+  executeAction,
+  type CommandAnalysis,
+} from "@/app/actions";
+import { Sidebar } from "@/components/dashboard/sidebar";
+import {
+  HealthCard,
+  type ServiceStatus,
+} from "@/components/dashboard/health-card";
+import { VoiceOrb, type OrbState } from "@/components/dashboard/voice-orb";
+import {
+  TerminalLogs,
+  type LogEntry,
+} from "@/components/dashboard/terminal-logs";
+import {
+  IconShield,
+  IconDatabase,
+  IconServer,
+  IconZap,
+} from "@/components/icons";
+
+// Service data type
+interface Service {
+  id: string;
+  name: string;
+  icon: React.ReactNode;
+  status: ServiceStatus;
+  cpu: number;
+  memory: number;
+  latency: number;
+}
+
+// Initial services
+const initialServices: Service[] = [
+  {
+    id: "gateway",
+    name: "API Gateway",
+    icon: <IconZap size={20} />,
+    status: "healthy",
+    cpu: 45,
+    memory: 62,
+    latency: 23,
+  },
+  {
+    id: "auth",
+    name: "Auth Service",
+    icon: <IconShield size={20} />,
+    status: "critical",
+    cpu: 92,
+    memory: 87,
+    latency: 450,
+  },
+  {
+    id: "database",
+    name: "Database",
+    icon: <IconDatabase size={20} />,
+    status: "healthy",
+    cpu: 34,
+    memory: 56,
+    latency: 12,
+  },
+  {
+    id: "cache",
+    name: "Redis Cache",
+    icon: <IconServer size={20} />,
+    status: "warning",
+    cpu: 78,
+    memory: 81,
+    latency: 89,
+  },
+];
+
+// Generate unique ID
+const generateId = () => Math.random().toString(36).substr(2, 9);
+
+export default function DashboardPage() {
+  // State
+  const [services, setServices] = useState<Service[]>(initialServices);
+  const [orbState, setOrbState] = useState<OrbState>("idle");
+  const [logs, setLogs] = useState<LogEntry[]>([
+    {
+      id: generateId(),
+      timestamp: new Date(),
+      type: "system",
+      message: "VoxPilot Mission Control initialized",
+    },
+    {
+      id: generateId(),
+      timestamp: new Date(),
+      type: "system",
+      message: "4 services connected and monitored",
+    },
+  ]);
+  const [confirmationText, setConfirmationText] = useState<string>();
+  const [pendingAction, setPendingAction] = useState<{
+    service: string;
+    action: string;
+  } | null>(null);
+  const [flashingCard, setFlashingCard] = useState<string | null>(null);
+
+  // Refs
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const isListeningForConfirmation = useRef(false);
+
+  // Add log entry
+  const addLog = useCallback((type: LogEntry["type"], message: string) => {
+    setLogs((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        timestamp: new Date(),
+        type,
+        message,
+      },
+    ]);
+  }, []);
+
+  // Play audio
+  const playAudio = useCallback((audioData: string) => {
+    return new Promise<void>((resolve) => {
+      if (audioRef.current) {
+        audioRef.current.src = audioData;
+        audioRef.current.onended = () => resolve();
+        audioRef.current.onerror = () => resolve();
+        audioRef.current.play().catch(() => resolve());
+      } else {
+        resolve();
+      }
+    });
+  }, []);
+
+  // Update service status
+  const updateServiceStatus = useCallback(
+    (serviceId: string, status: ServiceStatus, metrics?: Partial<Service>) => {
+      setServices((prev) =>
+        prev.map((s) =>
+          s.id === serviceId ? { ...s, status, ...(metrics || {}) } : s
+        )
+      );
+
+      // Flash the card
+      setFlashingCard(serviceId);
+      setTimeout(() => setFlashingCard(null), 2000);
+    },
+    []
+  );
+
+  // Handle voice command
+  const handleVoiceCommand = useCallback(
+    async (transcript: string) => {
+      addLog("user", `"${transcript}"`);
+      setOrbState("processing");
+
+      try {
+        const result = await analyzeCommand(transcript);
+
+        if (!result.success || !result.analysis) {
+          addLog("error", result.message || "Failed to analyze command");
+          setOrbState("idle");
+          return;
+        }
+
+        const analysis = result.analysis;
+        addLog("action", `Intent: ${analysis.intent}`);
+
+        // Handle based on risk level
+        if (analysis.risk === "HIGH" && analysis.service && analysis.action) {
+          // High risk - need confirmation
+          setPendingAction({
+            service: analysis.service,
+            action: analysis.action,
+          });
+          setConfirmationText(
+            analysis.confirmation ||
+              `Confirm ${analysis.action} on ${analysis.service}?`
+          );
+
+          addLog(
+            "warning",
+            `HIGH RISK: ${analysis.action} on ${analysis.service}`
+          );
+
+          // Play warning audio
+          if (result.audio) {
+            setOrbState("speaking");
+            await playAudio(result.audio);
+          }
+
+          setOrbState("confirming");
+          isListeningForConfirmation.current = true;
+
+          // Start listening for confirmation
+          startListening();
+        } else {
+          // Low risk or no action - just respond
+          addLog("system", analysis.response);
+
+          if (result.audio) {
+            setOrbState("speaking");
+            await playAudio(result.audio);
+          }
+
+          setOrbState("idle");
+        }
+      } catch (error) {
+        console.error("Command processing error:", error);
+        addLog("error", "Failed to process command");
+        setOrbState("idle");
+      }
+    },
+    [addLog, playAudio]
+  );
+
+  // Handle confirmation response
+  const handleConfirmation = useCallback(
+    async (transcript: string) => {
+      const lower = transcript.toLowerCase();
+      isListeningForConfirmation.current = false;
+
+      if (
+        lower.includes("yes") ||
+        lower.includes("confirm") ||
+        lower.includes("proceed")
+      ) {
+        // Execute the action
+        if (pendingAction) {
+          addLog(
+            "action",
+            `Executing ${pendingAction.action} on ${pendingAction.service}...`
+          );
+          setOrbState("processing");
+
+          try {
+            // Set to restarting state
+            updateServiceStatus(pendingAction.service, "restarting");
+
+            const result = await executeAction(
+              pendingAction.service,
+              pendingAction.action
+            );
+
+            if (result.success) {
+              addLog("success", result.message);
+
+              // Update to healthy
+              updateServiceStatus(pendingAction.service, "healthy", {
+                cpu: Math.floor(Math.random() * 30) + 20,
+                memory: Math.floor(Math.random() * 30) + 30,
+                latency: Math.floor(Math.random() * 30) + 10,
+              });
+
+              if (result.audio) {
+                setOrbState("speaking");
+                await playAudio(result.audio);
+              }
+            } else {
+              addLog("error", result.message);
+            }
+          } catch (error) {
+            addLog("error", "Action execution failed");
+          }
+        }
+      } else if (
+        lower.includes("no") ||
+        lower.includes("cancel") ||
+        lower.includes("abort")
+      ) {
+        addLog("system", "Action cancelled by user");
+      } else {
+        addLog("warning", "Unclear response, action cancelled");
+      }
+
+      setPendingAction(null);
+      setConfirmationText(undefined);
+      setOrbState("idle");
+    },
+    [pendingAction, addLog, playAudio, updateServiceStatus]
+  );
+
+  // Speech recognition setup
+  const startListening = useCallback(() => {
+    if (typeof window === "undefined") return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognitionAPI =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionAPI) {
+      addLog("error", "Speech recognition not supported");
+      return;
+    }
+
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      if (!isListeningForConfirmation.current) {
+        setOrbState("listening");
+      }
+      addLog("system", "Listening...");
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+
+      if (isListeningForConfirmation.current) {
+        handleConfirmation(transcript);
+      } else {
+        handleVoiceCommand(transcript);
+      }
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error:", event.error);
+      if (event.error !== "no-speech") {
+        addLog("error", `Voice error: ${event.error}`);
+      }
+      if (!isListeningForConfirmation.current) {
+        setOrbState("idle");
+      }
+    };
+
+    recognition.onend = () => {
+      if (orbState === "listening" && !isListeningForConfirmation.current) {
+        setOrbState("idle");
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  }, [orbState, addLog, handleVoiceCommand, handleConfirmation]);
+
+  // Orb click handler
+  const handleOrbClick = useCallback(() => {
+    if (orbState === "idle") {
+      startListening();
+    } else if (orbState === "listening") {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setOrbState("idle");
+    }
+  }, [orbState, startListening]);
+
+  // Cleanup
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []);
+
+  return (
+    <div className="flex min-h-screen bg-black">
+      {/* Audio element */}
+      <audio ref={audioRef} className="hidden" />
+
+      {/* Sidebar */}
+      <Sidebar />
+
+      {/* Main content */}
+      <main className="flex-1 ml-16 p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
+          {/* Header */}
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center justify-between"
+          >
+            <div>
+              <h1 className="text-2xl font-bold text-white">Mission Control</h1>
+              <p className="text-neutral-500 text-sm mt-1">
+                Real-time infrastructure monitoring and voice operations
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-green-400 text-xs font-medium">
+                  Systems Online
+                </span>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Service cards grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <AnimatePresence mode="popLayout">
+              {services.map((service, index) => (
+                <motion.div
+                  key={service.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                >
+                  <HealthCard
+                    name={service.name}
+                    icon={service.icon}
+                    status={service.status}
+                    cpu={service.cpu}
+                    memory={service.memory}
+                    latency={service.latency}
+                    isFlashing={flashingCard === service.id}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+
+          {/* Terminal logs */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+          >
+            <TerminalLogs logs={logs} />
+          </motion.div>
+
+          {/* Voice status indicator */}
+          <AnimatePresence>
+            {orbState !== "idle" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="fixed bottom-24 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-neutral-900/90 border border-neutral-800 backdrop-blur-sm"
+              >
+                <span className="text-sm text-neutral-300">
+                  {orbState === "listening" && "Listening to your command..."}
+                  {orbState === "processing" && "Processing command..."}
+                  {orbState === "speaking" && "VoxPilot is responding..."}
+                  {orbState === "confirming" && "Waiting for confirmation..."}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </main>
+
+      {/* Voice orb */}
+      <VoiceOrb
+        state={orbState}
+        onClick={handleOrbClick}
+        confirmationText={confirmationText}
+      />
+    </div>
+  );
+}

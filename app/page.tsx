@@ -13,17 +13,17 @@ import {
   Radio,
   Zap,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardHeader,
   CardTitle,
   CardDescription,
   CardContent,
-  Button,
-  Badge,
-  ScrollArea,
-  cn,
-} from "@/components/ui/primitives";
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 import { processCommand } from "./actions";
 
 // Types
@@ -165,8 +165,7 @@ export default function VoxPilotDashboard() {
             targetLower.includes(service.id)
           ) {
             if (action === "RESTART") {
-              addLog("action", `🔄 Restarting ${service.name}...`);
-              // Simulate restart - set to healthy after "restart"
+              addLog("action", `Restarting ${service.name}...`);
               return {
                 ...service,
                 status: "healthy" as const,
@@ -177,7 +176,7 @@ export default function VoxPilotDashboard() {
                 },
               };
             } else if (action === "SCALE") {
-              addLog("action", `⚡ Scaling ${service.name}...`);
+              addLog("action", `Scaling ${service.name}...`);
               return {
                 ...service,
                 status: "healthy" as const,
@@ -202,7 +201,7 @@ export default function VoxPilotDashboard() {
       if (!text.trim()) return;
 
       setIsProcessing(true);
-      addLog("user", `🎤 "${text}"`);
+      addLog("user", `"${text}"`);
 
       try {
         const result = await processCommand(text);
@@ -211,10 +210,10 @@ export default function VoxPilotDashboard() {
         if (result.action_data.action !== "NONE") {
           addLog(
             "system",
-            `📋 Action: ${result.action_data.action} → ${result.action_data.target}`
+            `Action: ${result.action_data.action} → ${result.action_data.target}`
           );
         }
-        addLog("system", `🤖 ${result.action_data.reply_text}`);
+        addLog("system", result.action_data.reply_text);
 
         // Play audio response
         if (result.audio) {
@@ -254,7 +253,7 @@ export default function VoxPilotDashboard() {
     recognition.onstart = () => {
       setIsListening(true);
       setTranscript("");
-      addLog("system", "🎙️ Listening for command...");
+      addLog("system", "Listening for command...");
     };
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
@@ -296,8 +295,7 @@ export default function VoxPilotDashboard() {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.start();
-        } catch (error) {
-          // Recognition might already be running
+        } catch {
           recognitionRef.current = initSpeechRecognition();
           recognitionRef.current?.start();
         }
@@ -315,7 +313,7 @@ export default function VoxPilotDashboard() {
       case "warning":
         return "warning";
       default:
-        return "default";
+        return "secondary";
     }
   };
 
@@ -323,47 +321,68 @@ export default function VoxPilotDashboard() {
   const getLogColor = (type: LogEntry["type"]) => {
     switch (type) {
       case "user":
-        return "text-cyan-400";
+        return "text-blue-400";
       case "system":
-        return "text-zinc-300";
+        return "text-slate-300";
       case "action":
-        return "text-emerald-400";
+        return "text-slate-100";
       case "error":
         return "text-red-400";
       default:
-        return "text-zinc-400";
+        return "text-slate-400";
+    }
+  };
+
+  // Get log prefix
+  const getLogPrefix = (type: LogEntry["type"]) => {
+    switch (type) {
+      case "user":
+        return "USR";
+      case "system":
+        return "SYS";
+      case "action":
+        return "ACT";
+      case "error":
+        return "ERR";
+      default:
+        return "LOG";
     }
   };
 
   return (
-    <div className="min-h-screen p-6 md:p-8">
+    <div className="min-h-screen p-4 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
         {/* Header */}
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
-              <Radio className="h-6 w-6" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-800 text-slate-300">
+              <Radio className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">VoxPilot</h1>
-              <p className="text-sm text-zinc-400">SRE Mission Control</p>
+              <h1 className="text-xl font-semibold tracking-tight text-slate-100">
+                VoxPilot
+              </h1>
+              <p className="text-sm text-slate-500">SRE Mission Control</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            {/* Status indicator */}
-            <div className="flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/50 px-4 py-2">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-1.5">
               <div
                 className={cn(
                   "h-2 w-2 rounded-full",
-                  isListening ? "animate-pulse bg-emerald-500" : "bg-zinc-600"
+                  isListening
+                    ? "animate-pulse bg-blue-500"
+                    : isProcessing
+                    ? "animate-pulse bg-amber-500"
+                    : "bg-slate-600"
                 )}
               />
-              <span className="text-sm text-zinc-400">
+              <span className="text-xs text-slate-400">
                 {isListening
-                  ? "Listening..."
+                  ? "Listening"
                   : isProcessing
-                  ? "Processing..."
+                  ? "Processing"
                   : "Ready"}
               </span>
             </div>
@@ -376,7 +395,7 @@ export default function VoxPilotDashboard() {
           <Card className="lg:col-span-2">
             <CardHeader>
               <div className="flex items-center gap-2">
-                <Server className="h-5 w-5 text-emerald-400" />
+                <Server className="h-4 w-4 text-slate-400" />
                 <CardTitle>Service Status</CardTitle>
               </div>
               <CardDescription>
@@ -391,20 +410,20 @@ export default function VoxPilotDashboard() {
                     <div
                       key={service.id}
                       className={cn(
-                        "rounded-lg border p-4 transition-all duration-300",
+                        "rounded-lg border p-4 transition-all duration-200",
                         service.status === "healthy"
-                          ? "border-emerald-500/30 bg-emerald-500/5"
+                          ? "border-slate-700 bg-slate-800/30"
                           : service.status === "critical"
-                          ? "border-red-500/30 bg-red-500/5"
-                          : "border-amber-500/30 bg-amber-500/5"
+                          ? "border-red-500/50 bg-red-500/5"
+                          : "border-amber-500/50 bg-amber-500/5"
                       )}
                     >
                       <div className="mb-3 flex items-center justify-between">
                         <Icon
                           className={cn(
-                            "h-5 w-5",
+                            "h-4 w-4",
                             service.status === "healthy"
-                              ? "text-emerald-400"
+                              ? "text-slate-400"
                               : service.status === "critical"
                               ? "text-red-400"
                               : "text-amber-400"
@@ -415,28 +434,30 @@ export default function VoxPilotDashboard() {
                             service.status.slice(1)}
                         </Badge>
                       </div>
-                      <h3 className="font-semibold">{service.name}</h3>
-                      <p className="text-xs text-zinc-500">
+                      <h3 className="font-medium text-slate-100">
+                        {service.name}
+                      </h3>
+                      <p className="text-xs text-slate-500">
                         Updated {service.lastUpdated}
                       </p>
 
                       {/* Mini metrics */}
                       <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                         <div>
-                          <span className="text-zinc-500">CPU</span>
-                          <p className="font-mono text-zinc-300">
+                          <span className="text-slate-500">CPU</span>
+                          <p className="font-mono text-slate-300">
                             {service.metrics.cpu}%
                           </p>
                         </div>
                         <div>
-                          <span className="text-zinc-500">MEM</span>
-                          <p className="font-mono text-zinc-300">
+                          <span className="text-slate-500">MEM</span>
+                          <p className="font-mono text-slate-300">
                             {service.metrics.memory}%
                           </p>
                         </div>
                         <div>
-                          <span className="text-zinc-500">REQ</span>
-                          <p className="font-mono text-zinc-300">
+                          <span className="text-slate-500">REQ</span>
+                          <p className="font-mono text-slate-300">
                             {service.metrics.requests}
                           </p>
                         </div>
@@ -452,7 +473,7 @@ export default function VoxPilotDashboard() {
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-emerald-400" />
+                <Activity className="h-4 w-4 text-slate-400" />
                 <CardTitle>Voice Control</CardTitle>
               </div>
               <CardDescription>
@@ -463,36 +484,39 @@ export default function VoxPilotDashboard() {
               {/* Mic Button */}
               <div className="relative">
                 {isListening && (
-                  <div className="absolute inset-0 animate-pulse-ring rounded-full bg-emerald-500/30" />
+                  <div className="absolute -inset-2 animate-ping rounded-full bg-blue-500/20" />
                 )}
                 <Button
-                  size="icon"
-                  variant={isListening ? "destructive" : "default"}
+                  size="lg"
+                  variant={isListening ? "destructive" : "secondary"}
                   className={cn(
-                    "relative h-20 w-20 rounded-full transition-all duration-300",
-                    isListening && "bg-red-600 hover:bg-red-700"
+                    "relative h-16 w-16 rounded-full transition-all duration-200",
+                    isListening && "bg-red-600 hover:bg-red-700",
+                    !isListening && "bg-slate-700 hover:bg-slate-600"
                   )}
                   onClick={toggleListening}
                   disabled={isProcessing}
                 >
                   {isListening ? (
-                    <MicOff className="h-8 w-8" />
+                    <MicOff className="h-6 w-6" />
                   ) : (
-                    <Mic className="h-8 w-8" />
+                    <Mic className="h-6 w-6" />
                   )}
                 </Button>
               </div>
 
               {/* Transcript */}
-              <div className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 text-center">
-                <p className="text-sm text-zinc-400">
+              <div className="w-full rounded-lg border border-slate-800 bg-slate-900/50 p-3 text-center">
+                <p className="text-sm text-slate-400">
                   {transcript || "Tap microphone to speak..."}
                 </p>
               </div>
 
               {/* Quick commands hint */}
               <div className="w-full space-y-2">
-                <p className="text-xs font-medium text-zinc-500">Try saying:</p>
+                <p className="text-xs font-medium text-slate-500">
+                  Try saying:
+                </p>
                 <div className="flex flex-wrap gap-2">
                   {[
                     "Restart payment service",
@@ -501,7 +525,7 @@ export default function VoxPilotDashboard() {
                   ].map((cmd) => (
                     <span
                       key={cmd}
-                      className="rounded-full border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-xs text-zinc-400"
+                      className="rounded-md border border-slate-800 bg-slate-900/50 px-2 py-1 text-xs text-slate-400"
                     >
                       &quot;{cmd}&quot;
                     </span>
@@ -516,26 +540,29 @@ export default function VoxPilotDashboard() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
-              <Terminal className="h-5 w-5 text-emerald-400" />
+              <Terminal className="h-4 w-4 text-slate-400" />
               <CardTitle>Mission Log</CardTitle>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="rounded-lg border border-zinc-800 bg-black/50 font-mono">
-              <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2">
-                <div className="h-3 w-3 rounded-full bg-red-500" />
-                <div className="h-3 w-3 rounded-full bg-amber-500" />
-                <div className="h-3 w-3 rounded-full bg-emerald-500" />
-                <span className="ml-2 text-xs text-zinc-500">
+            <div className="rounded-lg border border-slate-800 bg-slate-950 font-mono">
+              <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+                <div className="h-2.5 w-2.5 rounded-full bg-red-500/80" />
+                <div className="h-2.5 w-2.5 rounded-full bg-amber-500/80" />
+                <div className="h-2.5 w-2.5 rounded-full bg-green-500/80" />
+                <span className="ml-2 text-xs text-slate-500">
                   voxpilot-terminal
                 </span>
               </div>
-              <ScrollArea maxHeight="250px" className="p-4">
-                <div className="space-y-1">
+              <ScrollArea className="h-[250px] p-4">
+                <div className="space-y-1.5">
                   {logs.map((log) => (
-                    <div key={log.id} className="flex gap-2 text-sm">
-                      <span className="shrink-0 text-zinc-600">
-                        [{log.timestamp}]
+                    <div key={log.id} className="flex gap-3 text-xs">
+                      <span className="shrink-0 text-slate-600">
+                        {log.timestamp}
+                      </span>
+                      <span className="shrink-0 text-slate-500">
+                        [{getLogPrefix(log.type)}]
                       </span>
                       <span className={getLogColor(log.type)}>
                         {log.message}
@@ -543,9 +570,9 @@ export default function VoxPilotDashboard() {
                     </div>
                   ))}
                   <div ref={logsEndRef} />
-                  <div className="flex items-center gap-1 text-emerald-400">
+                  <div className="flex items-center gap-1 text-slate-500">
                     <Zap className="h-3 w-3" />
-                    <span className="animate-blink">_</span>
+                    <span className="animate-pulse">_</span>
                   </div>
                 </div>
               </ScrollArea>

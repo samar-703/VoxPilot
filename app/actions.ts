@@ -53,7 +53,7 @@ async function analyzeWithGemini(text: string): Promise<ActionData> {
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.0-flash",
     });
 
     const result = await model.generateContent([
@@ -116,7 +116,7 @@ async function textToSpeech(text: string): Promise<string | null> {
         },
         body: JSON.stringify({
           text: text,
-          model_id: "eleven_monolingual_v1",
+          model_id: "eleven_turbo_v2_5",
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,

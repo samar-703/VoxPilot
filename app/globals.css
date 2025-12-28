@@ -4,11 +4,11 @@
 
 @layer base {
   * {
-    @apply border-zinc-800;
+    @apply border-slate-800;
   }
 
   body {
-    @apply bg-zinc-950 text-zinc-100;
+    @apply bg-slate-950 text-slate-50;
   }
 }
 
@@ -17,12 +17,12 @@
     scrollbar-width: thin;
   }
 
-  .scrollbar-track-zinc-800::-webkit-scrollbar-track {
-    background: #27272a;
+  .scrollbar-track-slate-800::-webkit-scrollbar-track {
+    background: #1e293b;
   }
 
-  .scrollbar-thumb-zinc-600::-webkit-scrollbar-thumb {
-    background: #52525b;
+  .scrollbar-thumb-slate-600::-webkit-scrollbar-thumb {
+    background: #475569;
     border-radius: 4px;
   }
 

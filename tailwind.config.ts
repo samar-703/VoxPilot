@@ -73,13 +73,30 @@ const config: Config = {
           "50%": { transform: "scale(1.05)", opacity: "1" },
         },
         "orb-listening": {
-          "0%, 100%": {
+          "0%": {
             transform: "scale(1)",
-            boxShadow: "0 0 30px 10px rgba(59,130,246,0.4)",
+            boxShadow:
+              "0 0 30px 10px rgba(139,92,246,0.5), 0 0 60px 20px rgba(59,130,246,0.3)",
+          },
+          "25%": {
+            transform: "scale(1.08)",
+            boxShadow:
+              "0 0 40px 15px rgba(168,85,247,0.6), 0 0 80px 30px rgba(139,92,246,0.4)",
           },
           "50%": {
-            transform: "scale(1.1)",
-            boxShadow: "0 0 50px 20px rgba(59,130,246,0.6)",
+            transform: "scale(1.15)",
+            boxShadow:
+              "0 0 50px 20px rgba(192,132,252,0.7), 0 0 100px 40px rgba(168,85,247,0.5)",
+          },
+          "75%": {
+            transform: "scale(1.08)",
+            boxShadow:
+              "0 0 40px 15px rgba(168,85,247,0.6), 0 0 80px 30px rgba(139,92,246,0.4)",
+          },
+          "100%": {
+            transform: "scale(1)",
+            boxShadow:
+              "0 0 30px 10px rgba(139,92,246,0.5), 0 0 60px 20px rgba(59,130,246,0.3)",
           },
         },
         "orb-speaking": {
@@ -124,7 +141,7 @@ const config: Config = {
       animation: {
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
         "orb-idle": "orb-idle 3s ease-in-out infinite",
-        "orb-listening": "orb-listening 1.5s ease-in-out infinite",
+        "orb-listening": "orb-listening 2s ease-in-out infinite",
         "orb-speaking": "orb-speaking 0.8s ease-in-out infinite",
         "orb-processing": "orb-processing 1s ease-in-out infinite",
         "card-critical": "card-critical 1.5s ease-in-out infinite",

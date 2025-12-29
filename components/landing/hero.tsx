@@ -32,33 +32,37 @@ export function LandingHero() {
         />
       </div>
 
-      {/* Header */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-4 lg:px-12">
-        <div className="flex items-center gap-3">
-          <VoxPilotLogo size={36} className="text-foreground" />
-          <span className="text-lg font-semibold tracking-tight text-foreground">
-            VoxPilot
-          </span>
-        </div>
-        <nav className="hidden md:flex items-center gap-8">
-          <a
-            href="#features"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Features
-          </a>
-          <a
-            href="#demo"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Demo
-          </a>
-          <Link href="/dashboard">
-            <Button variant="ghost" size="sm">
-              Dashboard
-            </Button>
-          </Link>
-          <ModeToggle />
+      {/* Header - Floating Glass Navbar */}
+      <header className="relative z-10 flex justify-center px-6 py-6">
+        <nav className="flex items-center gap-2 px-2 py-2 rounded-full border border-white/[0.08] bg-white/[0.03] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
+          <div className="flex items-center gap-2 pl-4 pr-6">
+            <VoxPilotLogo size={28} className="text-white" />
+            <span className="text-base font-semibold tracking-tight text-white">
+              VoxPilot
+            </span>
+          </div>
+          <div className="hidden md:flex items-center gap-1">
+            <a
+              href="#features"
+              className="px-4 py-2 text-[15px] text-neutral-300 hover:text-white transition-colors rounded-full hover:bg-white/5"
+            >
+              Features
+            </a>
+            <a
+              href="#demo"
+              className="px-4 py-2 text-[15px] text-neutral-300 hover:text-white transition-colors rounded-full hover:bg-white/5"
+            >
+              Demo
+            </a>
+            <Link href="/dashboard">
+              <span className="px-4 py-2 text-[15px] text-white font-medium transition-colors rounded-full hover:bg-white/5 cursor-pointer">
+                Dashboard
+              </span>
+            </Link>
+          </div>
+          <div className="pl-2 pr-2">
+            <ModeToggle />
+          </div>
         </nav>
       </header>
 
@@ -105,7 +109,7 @@ export function LandingHero() {
           className="mt-10 flex flex-col sm:flex-row items-center gap-4"
         >
           <Link href="/dashboard">
-            <Button variant="glow" size="xl" className="group">
+            <Button variant="glow" size="xl" className="group font-semibold">
               Launch Mission Control
               <IconArrowRight
                 size={18}
@@ -113,7 +117,7 @@ export function LandingHero() {
               />
             </Button>
           </Link>
-          <Button variant="outline" size="xl">
+          <Button variant="ghost-pill" size="xl" className="font-medium">
             View Demo
           </Button>
         </motion.div>

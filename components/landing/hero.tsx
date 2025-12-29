@@ -34,28 +34,28 @@ export function LandingHero() {
 
       {/* Header - Floating Glass Navbar */}
       <header className="relative z-10 flex justify-center px-6 py-6">
-        <nav className="flex items-center gap-2 px-2 py-2 rounded-full border border-white/[0.08] bg-white/[0.03] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
+        <nav className="flex items-center gap-2 px-2 py-2 rounded-full border border-black/[0.08] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.03] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
           <div className="flex items-center gap-2 pl-4 pr-6">
-            <VoxPilotLogo size={28} className="text-white" />
-            <span className="text-base font-semibold tracking-tight text-white">
+            <VoxPilotLogo size={28} className="text-black dark:text-white" />
+            <span className="text-base font-semibold tracking-tight text-black dark:text-white">
               VoxPilot
             </span>
           </div>
           <div className="hidden md:flex items-center gap-1">
             <a
               href="#features"
-              className="px-4 py-2 text-[15px] text-neutral-300 hover:text-white transition-colors rounded-full hover:bg-white/5"
+              className="px-4 py-2 text-[15px] text-neutral-600 dark:text-neutral-300 hover:text-black dark:hover:text-white transition-colors rounded-full hover:bg-black/5 dark:hover:bg-white/5"
             >
               Features
             </a>
             <a
               href="#demo"
-              className="px-4 py-2 text-[15px] text-neutral-300 hover:text-white transition-colors rounded-full hover:bg-white/5"
+              className="px-4 py-2 text-[15px] text-neutral-600 dark:text-neutral-300 hover:text-black dark:hover:text-white transition-colors rounded-full hover:bg-black/5 dark:hover:bg-white/5"
             >
               Demo
             </a>
             <Link href="/dashboard">
-              <span className="px-4 py-2 text-[15px] text-white font-medium transition-colors rounded-full hover:bg-white/5 cursor-pointer">
+              <span className="px-4 py-2 text-[15px] text-black dark:text-white font-medium transition-colors rounded-full hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer">
                 Dashboard
               </span>
             </Link>
@@ -130,7 +130,7 @@ export function LandingHero() {
           className="mt-16 relative isolate contain-layout contain-paint"
         >
           <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent z-10 pointer-events-none" />
-          <div className="flex items-center gap-1 px-8 py-6 rounded-2xl border border-border bg-muted/30 backdrop-blur-sm">
+          <div className="flex items-center gap-1 px-8 py-6 rounded-2xl border border-black/15 dark:border-white/10 bg-white/60 dark:bg-white/[0.03] shadow-sm backdrop-blur-sm">
             <VoiceWaveformBars />
             <span className="ml-4 text-sm text-muted-foreground font-mono">
               &quot;Restart payment service&quot;
@@ -221,9 +221,9 @@ function FeatureCard({
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
       transition={{ duration: 0.6, delay }}
-      className="p-6 rounded-xl border border-border bg-muted/30 hover:bg-muted/50 transition-colors group"
+      className="p-6 rounded-xl border border-black/15 dark:border-white/10 bg-white/60 dark:bg-white/[0.03] hover:bg-white/80 dark:hover:bg-white/[0.05] shadow-sm hover:shadow-md transition-all group"
     >
-      <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center mb-4 text-muted-foreground group-hover:text-foreground transition-colors">
+      <div className="w-10 h-10 rounded-lg bg-black/[0.07] dark:bg-white/10 flex items-center justify-center mb-4 text-muted-foreground group-hover:text-foreground transition-colors">
         {icon}
       </div>
       <h3 className="text-lg font-semibold mb-2 text-foreground">{title}</h3>

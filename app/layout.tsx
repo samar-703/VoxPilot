@@ -59,7 +59,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head />
       <body
-        className={`${inter.variable} font-sans bg-black text-white min-h-screen`}
+        className={`${inter.variable} font-sans bg-background text-foreground min-h-screen`}
       >
         <ThemeProvider
           attribute="class"

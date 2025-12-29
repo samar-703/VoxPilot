@@ -91,7 +91,7 @@ export function LandingHero() {
         >
           VoxPilot is an AI-powered SRE mission control that understands natural
           language commands. Speak to scale services, restart containers, and
-          manage infrastructure—with safety confirmations built in.
+          manage infrastructure with safety confirmations built in.
         </motion.p>
 
         <motion.div
@@ -119,24 +119,11 @@ export function LandingHero() {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.8, delay: 0.5 }}
-          className="mt-16 relative"
+          className="mt-16 relative isolate contain-layout contain-paint"
         >
           <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent z-10 pointer-events-none" />
           <div className="flex items-center gap-1 px-8 py-6 rounded-2xl border border-neutral-800 bg-neutral-900/30 backdrop-blur-sm">
-            {[...Array(12)].map((_, i) => (
-              <motion.div
-                key={i}
-                className="w-1 bg-white/60 rounded-full"
-                animate={{
-                  height: [12, 24 + Math.random() * 24, 12],
-                }}
-                transition={{
-                  duration: 0.8 + Math.random() * 0.4,
-                  repeat: Infinity,
-                  delay: i * 0.05,
-                }}
-              />
-            ))}
+            <VoiceWaveformBars />
             <span className="ml-4 text-sm text-neutral-400 font-mono">
               &quot;Restart payment service&quot;
             </span>
@@ -234,5 +221,43 @@ function FeatureCard({
       <h3 className="text-lg font-semibold mb-2">{title}</h3>
       <p className="text-sm text-neutral-400">{description}</p>
     </motion.div>
+  );
+}
+
+// Pre-computed animation configs for smooth, consistent animation
+const WAVEFORM_BARS = [
+  { scale: 2.5, duration: 0.9, delay: 0 },
+  { scale: 3.2, duration: 1.1, delay: 0.05 },
+  { scale: 2.8, duration: 0.85, delay: 0.1 },
+  { scale: 3.5, duration: 1.0, delay: 0.15 },
+  { scale: 2.2, duration: 0.95, delay: 0.2 },
+  { scale: 3.8, duration: 1.05, delay: 0.25 },
+  { scale: 2.6, duration: 0.88, delay: 0.3 },
+  { scale: 3.0, duration: 1.12, delay: 0.35 },
+  { scale: 2.4, duration: 0.92, delay: 0.4 },
+  { scale: 3.3, duration: 1.08, delay: 0.45 },
+  { scale: 2.7, duration: 0.87, delay: 0.5 },
+  { scale: 3.1, duration: 0.98, delay: 0.55 },
+];
+
+function VoiceWaveformBars() {
+  return (
+    <div className="flex items-center gap-1 h-12">
+      {WAVEFORM_BARS.map((bar, i) => (
+        <motion.div
+          key={i}
+          className="w-1 h-3 bg-white/60 rounded-full origin-center will-change-transform"
+          animate={{
+            scaleY: [1, bar.scale, 1],
+          }}
+          transition={{
+            duration: bar.duration,
+            repeat: Infinity,
+            ease: "easeInOut",
+            delay: bar.delay,
+          }}
+        />
+      ))}
+    </div>
   );
 }

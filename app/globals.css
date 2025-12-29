@@ -184,4 +184,21 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  /* CSS Containment utilities for animation isolation */
+  .contain-layout {
+    contain: layout;
+  }
+
+  .contain-paint {
+    contain: paint;
+  }
+
+  .contain-strict {
+    contain: strict;
+  }
+
+  .contain-content {
+    contain: content;
+  }
 }

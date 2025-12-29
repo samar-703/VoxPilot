@@ -1,7 +1,7 @@
 "use server";
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { YoutubeTranscript } from "youtube-transcript";
+import { getSubtitles } from "youtube-caption-scraper";
 import { createClient } from "@/lib/supabase/server";
 
 // Initialize Gemini
@@ -74,13 +74,24 @@ function getThumbnailUrl(videoId: string): string {
 
 // Fetch transcript from YouTube
 async function fetchTranscript(videoId: string): Promise<string> {
+  console.log("Attempting to fetch transcript for video:", videoId);
+  
   try {
-    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
-    return transcript.map((item) => item.text).join(" ");
+    const subtitles = await getSubtitles({ videoID: videoId, lang: 'en' });
+    
+    if (!subtitles || subtitles.length === 0) {
+      throw new Error("No captions found");
+    }
+    
+    const transcriptText = subtitles.map((subtitle) => subtitle.text).join(" ");
+    console.log("Transcript fetched successfully. Length:", transcriptText.length, "characters");
+    console.log("Transcript preview:", transcriptText.substring(0, 100) + "...");
+    
+    return transcriptText;
   } catch (error) {
     console.error("Failed to fetch transcript:", error);
     throw new Error(
-      "Could not fetch video transcript. The video may not have captions available."
+      "This video does not have open captions. Please try a video with CC enabled."
     );
   }
 }
@@ -97,28 +108,30 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
   }
 
   try {
-    // Fetch transcript
-    console.log("📝 Fetching transcript for video:", videoId);
+    console.log("Processing YouTube link:", url);
+    console.log("Video ID:", videoId);
+    
     const transcript = await fetchTranscript(videoId);
 
-    if (!transcript || transcript.length < 50) {
+    if (!transcript || transcript.length < 20) {
+      console.warn("Transcript too short or empty. Length:", transcript?.length || 0);
       return {
         success: false,
-        message: "Video transcript is too short or unavailable.",
+        message: "Video transcript is too short or unavailable. Try a video with captions.",
       };
     }
 
-    // Generate summary with Gemini
-    console.log("Generating summary with Gemini...");
+    console.log("Transcript fetched. Generating summary...");
     const summary = await generateSummaryWithGemini(transcript);
 
     if (!summary) {
       return {
         success: false,
-        message: "Failed to generate summary. Please try again.",
+        message: "Failed to generate summary. The AI service may be unavailable. Please try again.",
       };
     }
 
+    console.log("Video analyzed successfully!");
     return {
       success: true,
       message: "Video analyzed successfully!",
@@ -132,10 +145,11 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
     };
   } catch (error) {
     console.error("Error processing YouTube link:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    
     return {
       success: false,
-      message:
-        error instanceof Error ? error.message : "Failed to process video.",
+      message: `Failed to process video: ${errorMessage}. Please try again or use a video with captions.`,
     };
   }
 }
@@ -156,6 +170,7 @@ async function generateSummaryWithGemini(
   }
 
   try {
+    console.log("Generating summary with Gemini...");
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const systemPrompt = `You are a research assistant. Summarize this video transcript into:
@@ -170,11 +185,12 @@ Return ONLY valid JSON in this exact format:
   "abstract": "..."
 }`;
 
-    // Truncate transcript if too long (keep first 15000 chars for context)
     const truncatedTranscript =
       transcript.length > 15000
         ? transcript.substring(0, 15000) + "..."
         : transcript;
+    
+    console.log(`Transcript length: ${transcript.length} chars, truncated to: ${truncatedTranscript.length} chars`);
 
     const result = await model.generateContent([
       systemPrompt,
@@ -182,14 +198,18 @@ Return ONLY valid JSON in this exact format:
     ]);
 
     const text = result.response.text();
+    console.log("Gemini response received, length:", text.length);
     const jsonMatch = text.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
-      console.error("Failed to parse Gemini response");
+      console.error("Failed to parse Gemini response - no JSON found");
+      console.error("Raw response:", text.substring(0, 500));
       return null;
     }
 
-    return JSON.parse(jsonMatch[0]) as VideoSummary;
+    const parsed = JSON.parse(jsonMatch[0]);
+    console.log("Summary generated successfully:", parsed.title);
+    return parsed as VideoSummary;
   } catch (error: unknown) {
     if (
       error &&

@@ -127,12 +127,12 @@ JSON only:
   } catch (error: unknown) {
     // Check if it's a rate limit error (429)
     if (error && typeof error === 'object' && 'status' in error && error.status === 429) {
-      console.log("⚠️ Gemini quota exceeded - disabling for 60 seconds");
+      console.log("Gemini quota exceeded - disabling for 60 seconds");
       geminiDisabledUntil = Date.now() + 60000; // Disable for 60 seconds
     }
     
-    console.error("❌ Gemini API failed:", error);
-    console.log("⚠️ FALLBACK: Using local command parser");
+    console.error("Gemini API failed:", error);
+    console.log("FALLBACK: Using local command parser");
 
     // Fallback local parser
     return localCommandParser(transcript);

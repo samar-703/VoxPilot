@@ -1,6 +1,8 @@
 "use server";
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { YoutubeTranscript } from "youtube-transcript";
+import { createClient } from "@/lib/supabase/server";
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
@@ -9,214 +11,527 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
 let geminiDisabledUntil = 0;
 
 // Types
+export interface VideoSummary {
+  title: string;
+  keyTakeaways: string[];
+  abstract: string;
+}
+
+export interface SavedContent {
+  id: string;
+  user_id: string;
+  url: string;
+  video_id: string;
+  title: string;
+  summary_json: VideoSummary;
+  thumbnail_url: string;
+  created_at: string;
+}
+
 export interface CommandAnalysis {
-  intent: string;
-  service: string | null;
-  action: string | null;
-  risk: "HIGH" | "LOW" | "NONE";
+  intent:
+    | "analyze_url"
+    | "question"
+    | "read_summary"
+    | "save"
+    | "list"
+    | "delete"
+    | "greeting"
+    | "unclear";
+  url?: string;
+  videoId?: string;
+  question?: string;
   response: string;
-  confirmation?: string;
 }
 
 export interface ActionResult {
   success: boolean;
   message: string;
-  audio?: string; // Base64 audio
+  audio?: string;
   analysis?: CommandAnalysis;
+  summary?: VideoSummary;
+  savedContent?: SavedContent;
 }
 
-// Service state (in production, this would be a database)
-const serviceStates: Record<
-  string,
-  {
-    status: "healthy" | "critical" | "warning" | "restarting";
-    cpu: number;
-    memory: number;
-    latency: number;
-  }
-> = {
-  gateway: { status: "healthy", cpu: 45, memory: 62, latency: 23 },
-  auth: { status: "critical", cpu: 92, memory: 87, latency: 450 },
-  database: { status: "healthy", cpu: 34, memory: 56, latency: 12 },
-  cache: { status: "warning", cpu: 78, memory: 81, latency: 89 },
-};
+// Extract YouTube Video ID from URL
+function extractVideoId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/,
+    /^([a-zA-Z0-9_-]{11})$/, // Direct video ID
+  ];
 
-// Analyze voice command with Gemini
-export async function analyzeCommand(
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+// Get YouTube thumbnail URL
+function getThumbnailUrl(videoId: string): string {
+  return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+}
+
+// Fetch transcript from YouTube
+async function fetchTranscript(videoId: string): Promise<string> {
+  try {
+    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
+    return transcript.map((item) => item.text).join(" ");
+  } catch (error) {
+    console.error("Failed to fetch transcript:", error);
+    throw new Error(
+      "Could not fetch video transcript. The video may not have captions available."
+    );
+  }
+}
+
+// Process YouTube link and generate summary
+export async function processYoutubeLink(url: string): Promise<ActionResult> {
+  const videoId = extractVideoId(url);
+
+  if (!videoId) {
+    return {
+      success: false,
+      message: "Invalid YouTube URL. Please provide a valid YouTube link.",
+    };
+  }
+
+  try {
+    // Fetch transcript
+    console.log("📝 Fetching transcript for video:", videoId);
+    const transcript = await fetchTranscript(videoId);
+
+    if (!transcript || transcript.length < 50) {
+      return {
+        success: false,
+        message: "Video transcript is too short or unavailable.",
+      };
+    }
+
+    // Generate summary with Gemini
+    console.log("Generating summary with Gemini...");
+    const summary = await generateSummaryWithGemini(transcript);
+
+    if (!summary) {
+      return {
+        success: false,
+        message: "Failed to generate summary. Please try again.",
+      };
+    }
+
+    return {
+      success: true,
+      message: "Video analyzed successfully!",
+      summary,
+      analysis: {
+        intent: "analyze_url",
+        url,
+        videoId,
+        response: `Analyzed: ${summary.title}`,
+      },
+    };
+  } catch (error) {
+    console.error("Error processing YouTube link:", error);
+    return {
+      success: false,
+      message:
+        error instanceof Error ? error.message : "Failed to process video.",
+    };
+  }
+}
+
+// Generate summary using Gemini 2.0 Flash
+async function generateSummaryWithGemini(
   transcript: string
-): Promise<ActionResult> {
-  // Skip Gemini if quota was recently exceeded (cache for 60 seconds)
+): Promise<VideoSummary | null> {
   const now = Date.now();
   if (now < geminiDisabledUntil) {
-    console.log("⏭️ Skipping Gemini (quota exceeded, using local parser)");
-    return localCommandParser(transcript);
+    console.log("⏭️ Gemini quota exceeded, skipping...");
+    return null;
   }
 
-  // Skip Gemini if no API key
   if (!process.env.GOOGLE_API_KEY) {
-    console.log("⏭️ No Gemini API key, using local parser");
-    return localCommandParser(transcript);
+    console.log("⏭No Gemini API key configured");
+    return null;
   }
 
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    const systemPrompt = `You are VoxPilot, a voice-controlled SRE assistant.
-Respond ONLY with valid JSON, no other text.
+    const systemPrompt = `You are a research assistant. Summarize this video transcript into:
+1. A concise Title (max 10 words)
+2. Exactly 3 Key Takeaways (each max 20 words)
+3. A 50-word Abstract
 
-Services: gateway, auth, database, cache
-Service actions: restart, scale, diagnose, check-status, rollback, deploy, stop, kill
-Dashboard actions: show-all, show-critical, show-warnings, clear-logs, go-home
+Return ONLY valid JSON in this exact format:
+{
+  "title": "...",
+  "keyTakeaways": ["...", "...", "..."],
+  "abstract": "..."
+}`;
 
-SPEECH RECOGNITION FIX (CRITICAL - always apply):
-- "earth", "off", "all", "path", "oth" → "auth"
-- "cash", "catch" → "cache"  
-- "data", "date" → "database"
-- "gate way", "getaway" → "gateway"
+    // Truncate transcript if too long (keep first 15000 chars for context)
+    const truncatedTranscript =
+      transcript.length > 15000
+        ? transcript.substring(0, 15000) + "..."
+        : transcript;
 
-Risk levels:
-- HIGH: restart, stop, kill, rollback, deploy, scale
-- LOW: check-status, diagnose, logs, show-all, show-critical, clear-logs, go-home
-- NONE: greetings, unclear
-
-KEEP RESPONSES VERY SHORT (saves TTS quota):
-- "response": max 6 words
-- "confirmation": max 8 words
-
-JSON only:
-{"intent":"...","service":"...or null","action":"...or null","risk":"HIGH|LOW|NONE","response":"short","confirmation":"only for HIGH"}`;
-
-    console.log("Sending to Gemini API...");
     const result = await model.generateContent([
       systemPrompt,
-      `User command: "${transcript}"`,
+      `Video transcript:\n${truncatedTranscript}`,
     ]);
 
     const text = result.response.text();
-    console.log("Gemini response received");
-
-    // Parse JSON from response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
+
     if (!jsonMatch) {
+      console.error("Failed to parse Gemini response");
+      return null;
+    }
+
+    return JSON.parse(jsonMatch[0]) as VideoSummary;
+  } catch (error: unknown) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 429
+    ) {
+      console.log("Gemini quota exceeded - disabling for 60 seconds");
+      geminiDisabledUntil = Date.now() + 60000;
+    }
+    console.error("Gemini API error:", error);
+    return null;
+  }
+}
+
+// Save content to Supabase
+export async function saveContent(
+  url: string,
+  videoId: string,
+  summary: VideoSummary
+): Promise<ActionResult> {
+  try {
+    const supabase = await createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
       return {
         success: false,
-        message: "Failed to parse command analysis",
+        message: "You must be logged in to save content.",
       };
     }
 
-    const analysis: CommandAnalysis = JSON.parse(jsonMatch[0]);
-    console.log("Gemini analysis:", JSON.stringify(analysis, null, 2));
+    const { data, error } = await supabase
+      .from("saved_content")
+      .insert({
+        user_id: user.id,
+        url,
+        video_id: videoId,
+        title: summary.title,
+        summary_json: summary,
+        thumbnail_url: getThumbnailUrl(videoId),
+      })
+      .select()
+      .single();
 
-    // Generate audio for the response
-    let audio: string | undefined;
-
-    if (analysis.risk === "HIGH" && analysis.confirmation) {
-      // For HIGH risk, generate confirmation warning audio
-      audio = await generateSpeech(analysis.confirmation);
-    } else if (analysis.response) {
-      // For other responses, generate response audio
-      audio = await generateSpeech(analysis.response);
+    if (error) {
+      console.error("Supabase insert error:", error);
+      return {
+        success: false,
+        message: "Failed to save content to database.",
+      };
     }
 
     return {
       success: true,
-      message: analysis.response,
-      audio,
-      analysis,
-    };
-  } catch (error: unknown) {
-    // Check if it's a rate limit error (429)
-    if (error && typeof error === 'object' && 'status' in error && error.status === 429) {
-      console.log("Gemini quota exceeded - disabling for 60 seconds");
-      geminiDisabledUntil = Date.now() + 60000; // Disable for 60 seconds
-    }
-    
-    console.error("Gemini API failed:", error);
-    console.log("FALLBACK: Using local command parser");
-
-    // Fallback local parser
-    return localCommandParser(transcript);
-  }
-}
-
-// Execute confirmed action
-export async function executeAction(
-  service: string,
-  action: string
-): Promise<ActionResult> {
-  try {
-    // Simulate action execution
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Update service state based on action
-    if (serviceStates[service]) {
-      switch (action) {
-        case "restart":
-          serviceStates[service].status = "healthy";
-          serviceStates[service].cpu = Math.floor(Math.random() * 30) + 20;
-          serviceStates[service].memory = Math.floor(Math.random() * 30) + 30;
-          serviceStates[service].latency = Math.floor(Math.random() * 30) + 10;
-          break;
-        case "stop":
-        case "kill":
-          serviceStates[service].status = "critical";
-          break;
-        case "scale":
-          serviceStates[service].cpu = Math.floor(
-            serviceStates[service].cpu * 0.7
-          );
-          serviceStates[service].memory = Math.floor(
-            serviceStates[service].memory * 0.8
-          );
-          break;
-      }
-    }
-
-    const successMessage = `${service} ${action} complete.`;
-    const audio = await generateSpeech(successMessage);
-
-    return {
-      success: true,
-      message: successMessage,
-      audio,
+      message: "Content saved successfully!",
+      savedContent: data as SavedContent,
     };
   } catch (error) {
-    console.error("Action execution error:", error);
+    console.error("Save content error:", error);
     return {
       success: false,
-      message: `Failed to ${action} ${service}`,
+      message: "Failed to save content.",
     };
   }
 }
 
-// Get current service states
-export async function getServiceStates() {
-  return serviceStates;
+// Get saved content for current user
+export async function getSavedContent(): Promise<SavedContent[]> {
+  try {
+    const supabase = await createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from("saved_content")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Supabase fetch error:", error);
+      return [];
+    }
+
+    return data as SavedContent[];
+  } catch (error) {
+    console.error("Get saved content error:", error);
+    return [];
+  }
 }
 
-// Generate speech with ElevenLabs
-async function generateSpeech(text: string): Promise<string | undefined> {
+// Delete saved content
+export async function deleteContent(id: string): Promise<ActionResult> {
+  try {
+    const supabase = await createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return {
+        success: false,
+        message: "You must be logged in to delete content.",
+      };
+    }
+
+    const { error } = await supabase
+      .from("saved_content")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Supabase delete error:", error);
+      return {
+        success: false,
+        message: "Failed to delete content.",
+      };
+    }
+
+    return {
+      success: true,
+      message: "Content deleted successfully!",
+    };
+  } catch (error) {
+    console.error("Delete content error:", error);
+    return {
+      success: false,
+      message: "Failed to delete content.",
+    };
+  }
+}
+
+// Answer questions about saved content
+export async function askQuestion(
+  question: string,
+  videoId?: string
+): Promise<ActionResult> {
+  try {
+    const supabase = await createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return {
+        success: false,
+        message: "You must be logged in to ask questions.",
+      };
+    }
+
+    // Fetch relevant content
+    let query = supabase
+      .from("saved_content")
+      .select("*")
+      .eq("user_id", user.id);
+
+    if (videoId) {
+      query = query.eq("video_id", videoId);
+    }
+
+    const { data: contents } = await query.limit(5);
+
+    if (!contents || contents.length === 0) {
+      return {
+        success: false,
+        message: "No saved content found to answer your question.",
+      };
+    }
+
+    // Use Gemini to answer the question
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+    const context = contents
+      .map(
+        (c) => `Title: ${c.title}\nSummary: ${JSON.stringify(c.summary_json)}`
+      )
+      .join("\n\n");
+
+    const result = await model.generateContent([
+      `You are a helpful assistant answering questions about saved YouTube videos. Keep answers concise (max 100 words).`,
+      `Context from saved videos:\n${context}`,
+      `Question: ${question}`,
+    ]);
+
+    const answer = result.response.text();
+
+    return {
+      success: true,
+      message: answer,
+      analysis: {
+        intent: "question",
+        question,
+        response: answer,
+      },
+    };
+  } catch (error) {
+    console.error("Ask question error:", error);
+    return {
+      success: false,
+      message: "Failed to answer question.",
+    };
+  }
+}
+
+// Analyze voice command intent
+export async function analyzeCommand(
+  transcript: string
+): Promise<ActionResult> {
+  const lower = transcript.toLowerCase();
+
+  // Check for URL in transcript
+  const urlMatch = transcript.match(
+    /(https?:\/\/[^\s]+)|(youtu\.?be[^\s]+)|(youtube\.com[^\s]+)/i
+  );
+
+  if (urlMatch) {
+    // Extract and process the URL
+    let url = urlMatch[0];
+    if (!url.startsWith("http")) {
+      url = "https://" + url;
+    }
+    return processYoutubeLink(url);
+  }
+
+  // Check for "analyze" or "summarize" intent with video reference
+  if (lower.match(/analyze|summarize|process|check out|look at/)) {
+    return {
+      success: true,
+      message: "Please provide a YouTube URL to analyze.",
+      analysis: {
+        intent: "analyze_url",
+        response: "Please provide a YouTube URL to analyze.",
+      },
+    };
+  }
+
+  // Check for "read summary" intent - this triggers TTS
+  if (lower.match(/read.*summary|read it|read.*to me|speak|say.*summary/)) {
+    const audio = await generateSpeech(
+      "Which summary would you like me to read?"
+    );
+    return {
+      success: true,
+      message: "Which summary would you like me to read?",
+      audio,
+      analysis: {
+        intent: "read_summary",
+        response: "Which summary would you like me to read?",
+      },
+    };
+  }
+
+  // Check for list/show saved content
+  if (lower.match(/list|show|my videos|saved|recent/)) {
+    return {
+      success: true,
+      message: "Showing your saved videos.",
+      analysis: {
+        intent: "list",
+        response: "Here are your saved videos.",
+      },
+    };
+  }
+
+  // Check for delete intent
+  if (lower.match(/delete|remove|clear/)) {
+    return {
+      success: true,
+      message: "Which video would you like to delete?",
+      analysis: {
+        intent: "delete",
+        response: "Which video would you like to delete?",
+      },
+    };
+  }
+
+  // Check for greetings
+  if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
+    const audio = await generateSpeech(
+      "Hello! Paste a YouTube link or ask me anything."
+    );
+    return {
+      success: true,
+      message:
+        "Hello! Paste a YouTube link to analyze, or ask me about your saved videos.",
+      audio,
+      analysis: {
+        intent: "greeting",
+        response: "Hello! Ready to help.",
+      },
+    };
+  }
+
+  // Default: treat as a question about saved content
+  if (transcript.length > 10) {
+    return askQuestion(transcript);
+  }
+
+  return {
+    success: true,
+    message:
+      "Paste a YouTube link to analyze, or ask me about your saved videos.",
+    analysis: {
+      intent: "unclear",
+      response: "Paste a YouTube link or ask a question.",
+    },
+  };
+}
+
+// Generate speech with ElevenLabs (ONLY when explicitly requested)
+export async function generateSpeech(
+  text: string
+): Promise<string | undefined> {
   const apiKey = process.env.ELEVEN_LABS_API_KEY;
 
   if (!apiKey) {
-    console.warn(
-      "⚠️ ElevenLabs API key not configured - using browser TTS fallback"
-    );
+    console.warn("⚠️ ElevenLabs API key not configured");
     return undefined;
   }
 
   try {
     console.log("🔊 Generating speech with ElevenLabs...");
-    console.log("🔑 API Key present:", apiKey ? `${apiKey.substring(0, 8)}...` : "MISSING");
-    
-    // Use Rachel voice (21m00Tcm4TlvDq8ikWAM) - professional female voice
-    // Using eleven_multilingual_v2 which is available on free tier
+
     const response = await fetch(
       "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
       {
         method: "POST",
         headers: {
-          "Accept": "audio/mpeg",
+          Accept: "audio/mpeg",
           "Content-Type": "application/json",
           "xi-api-key": apiKey,
         },
@@ -233,12 +548,7 @@ async function generateSpeech(text: string): Promise<string | undefined> {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(
-        "❌ ElevenLabs error:",
-        response.status,
-        errorText,
-        "- using browser TTS fallback"
-      );
+      console.error("ElevenLabs error:", response.status, errorText);
       return undefined;
     }
 
@@ -247,176 +557,70 @@ async function generateSpeech(text: string): Promise<string | undefined> {
     const base64Audio = Buffer.from(audioBuffer).toString("base64");
     return `data:audio/mpeg;base64,${base64Audio}`;
   } catch (error) {
-    console.error(
-      "❌ ElevenLabs TTS error:",
-      error,
-      "- using browser TTS fallback"
-    );
+    console.error("ElevenLabs TTS error:", error);
     return undefined;
   }
 }
 
-// Fallback local command parser (now async to call ElevenLabs)
-async function localCommandParser(transcript: string): Promise<ActionResult> {
-  const lower = transcript.toLowerCase();
-  console.log("🔍 Local parser analyzing:", `"${transcript}"`);
+// Read summary aloud (explicit user request only)
+export async function readSummaryAloud(
+  summary: VideoSummary
+): Promise<ActionResult> {
+  const textToRead = `${
+    summary.title
+  }. Key takeaways: ${summary.keyTakeaways.join(". ")}. ${summary.abstract}`;
 
-  // Service detection with fuzzy matching for speech recognition errors
-  // "auth" is often misheard as "earth", "off", "all", "path", "oth", "oauth"
-  const serviceAliases: Record<string, string[]> = {
-    gateway: ["gateway", "gate way", "get way", "getaway", "gate"],
-    auth: [
-      "auth",
-      "earth",
-      "off",
-      "all",
-      "path",
-      "oth",
-      "oauth",
-      "authentication",
-      "of",
-    ],
-    database: ["database", "data base", "data", "db", "base"],
-    cache: ["cache", "cash", "cach", "redis", "red is"],
-  };
+  const audio = await generateSpeech(textToRead);
 
-  let foundService: string | null = null;
-  for (const [service, aliases] of Object.entries(serviceAliases)) {
-    if (aliases.some((alias) => lower.includes(alias))) {
-      foundService = service;
-      console.log(`Service detected: "${service}" (from transcript)`);
-      break;
-    }
-  }
-
-  // Action detection
-  const destructiveActions = [
-    "restart",
-    "stop",
-    "kill",
-    "rollback",
-    "deploy",
-    "scale",
-  ];
-  const readActions = ["status", "check", "diagnose", "health", "logs"];
-
-  const foundDestructive = destructiveActions.find((a) => lower.includes(a));
-  const foundRead = readActions.find((a) => lower.includes(a));
-
-  if (foundDestructive) {
-    console.log(`Destructive action detected: "${foundDestructive}"`);
-  }
-  if (foundRead) {
-    console.log(`Read action detected: "${foundRead}"`);
-  }
-  if (!foundService) {
-    console.log("No service detected in transcript");
-  }
-  if (!foundDestructive && !foundRead) {
-    console.log("No action detected in transcript");
-  }
-
-  if (foundDestructive && foundService) {
-    console.log(
-      `🚨 HIGH RISK: ${foundDestructive} ${foundService} - requires confirmation`
-    );
-    const confirmationText = `${foundDestructive} ${foundService}? Say yes to confirm.`;
-    const audio = await generateSpeech(confirmationText);
-    return {
-      success: true,
-      message: `Ready to ${foundDestructive} ${foundService}. Confirm with "Yes".`,
-      audio,
-      analysis: {
-        intent: `${foundDestructive} ${foundService} service`,
-        service: foundService,
-        action: foundDestructive,
-        risk: "HIGH",
-        response: `Ready to ${foundDestructive} ${foundService}. Confirm with "Yes".`,
-        confirmation: confirmationText,
-      },
-    };
-  }
-
-  if (foundRead && foundService) {
-    const state = serviceStates[foundService];
-    const status = state?.status || "unknown";
-    console.log(`LOW RISK: Check status of ${foundService}`);
-    const responseText = `${foundService} ${status}. CPU ${state?.cpu}%.`;
-    const audio = await generateSpeech(responseText);
-    return {
-      success: true,
-      message: `${foundService} service is ${status}. CPU: ${state?.cpu}%, Memory: ${state?.memory}%.`,
-      audio,
-      analysis: {
-        intent: `Check ${foundService} status`,
-        service: foundService,
-        action: "check-status",
-        risk: "LOW",
-        response: responseText,
-      },
-    };
-  }
-
-  // Status report for all services
-  if (foundRead && (lower.includes("all") || lower.includes("report") || lower.includes("overview"))) {
-    const criticalCount = Object.values(serviceStates).filter(s => s.status === "critical").length;
-    const warningCount = Object.values(serviceStates).filter(s => s.status === "warning").length;
-    const healthyCount = Object.values(serviceStates).filter(s => s.status === "healthy").length;
-    
-    let responseText = "";
-    if (criticalCount > 0) {
-      responseText = `${criticalCount} critical, ${warningCount} warnings, ${healthyCount} healthy.`;
-    } else if (warningCount > 0) {
-      responseText = `${warningCount} warnings, ${healthyCount} healthy. No critical.`;
-    } else {
-      responseText = `All ${healthyCount} services healthy.`;
-    }
-    
-    const audio = await generateSpeech(responseText);
-    return {
-      success: true,
-      message: responseText,
-      audio,
-      analysis: {
-        intent: "Status report",
-        service: null,
-        action: "check-status",
-        risk: "LOW",
-        response: responseText,
-      },
-    };
-  }
-
-  // Greeting detection
-  if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
-    const responseText = "VoxPilot ready.";
-    const audio = await generateSpeech(responseText);
-    return {
-      success: true,
-      message: responseText,
-      audio,
-      analysis: {
-        intent: "Greeting",
-        service: null,
-        action: null,
-        risk: "NONE",
-        response: responseText,
-      },
-    };
-  }
-
-  const responseText = "Specify a service and action.";
-  const audio = await generateSpeech(responseText);
   return {
     success: true,
-    message: "I understood your command. Specify a service and action.",
+    message: "Reading summary...",
     audio,
-    analysis: {
-      intent: "Unclear command",
-      service: null,
-      action: null,
-      risk: "NONE",
-      response: responseText,
-    },
   };
+}
+
+// Auth actions
+export async function signIn(email: string, password: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  return { success: true, message: "Signed in successfully!" };
+}
+
+export async function signUp(email: string, password: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.auth.signUp({
+    email,
+    password,
+  });
+
+  if (error) {
+    return { success: false, message: error.message };
+  }
+
+  return {
+    success: true,
+    message: "Check your email to confirm your account!",
+  };
+}
+
+export async function signOut() {
+  const supabase = await createClient();
+  await supabase.auth.signOut();
+  return { success: true, message: "Signed out successfully!" };
+}
+
+export async function getUser() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user;
 }

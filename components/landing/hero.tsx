@@ -8,8 +8,9 @@ import {
   VoxPilotLogo,
   IconArrowRight,
   IconWaveform,
-  IconShield,
-  IconZap,
+  IconYoutube,
+  IconSearch,
+  IconBookmark,
 } from "@/components/icons";
 
 export function LandingHero() {
@@ -76,7 +77,7 @@ export function LandingHero() {
         >
           <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/50 text-xs text-muted-foreground">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            Voice-Powered Infrastructure Control
+            Voice-Powered Knowledge Base
           </span>
         </motion.div>
 
@@ -86,9 +87,9 @@ export function LandingHero() {
           transition={{ duration: 0.6, delay: 0.1 }}
           className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight max-w-4xl text-foreground"
         >
-          Control Your Infrastructure
+          Turn YouTube Videos
           <br />
-          <span className="text-muted-foreground">With Your Voice</span>
+          <span className="text-muted-foreground">Into Knowledge</span>
         </motion.h1>
 
         <motion.p
@@ -97,9 +98,9 @@ export function LandingHero() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="mt-6 text-lg text-muted-foreground max-w-2xl"
         >
-          VoxPilot is an AI-powered SRE mission control that understands natural
-          language commands. Speak to scale services, restart containers, and
-          manage infrastructure with safety confirmations built in.
+          VoxPilot is an AI-powered YouTube knowledge workspace. Paste a link or
+          speak a command to extract key insights, summaries, and takeaways from
+          any video. Build your personal knowledge library with voice control.
         </motion.p>
 
         <motion.div
@@ -108,18 +109,20 @@ export function LandingHero() {
           transition={{ duration: 0.6, delay: 0.3 }}
           className="mt-10 flex flex-col sm:flex-row items-center gap-4"
         >
-          <Link href="/dashboard">
+          <Link href="/login">
             <Button variant="glow" size="xl" className="group font-semibold">
-              Launch Mission Control
+              Get Started Free
               <IconArrowRight
                 size={18}
                 className="transition-transform group-hover:translate-x-1"
               />
             </Button>
           </Link>
-          <Button variant="ghost-pill" size="xl" className="font-medium">
-            View Demo
-          </Button>
+          <Link href="#demo">
+            <Button variant="ghost-pill" size="xl" className="font-medium">
+              Watch Demo
+            </Button>
+          </Link>
         </motion.div>
 
         {/* Voice Visualization */}
@@ -133,7 +136,7 @@ export function LandingHero() {
           <div className="flex items-center gap-1 px-8 py-6 rounded-2xl border border-black/15 dark:border-white/10 bg-white/60 dark:bg-white/[0.03] shadow-sm backdrop-blur-sm">
             <VoiceWaveformBars />
             <span className="ml-4 text-sm text-muted-foreground font-mono">
-              &quot;Restart payment service&quot;
+              &quot;Summarize this YouTube video&quot;
             </span>
           </div>
         </motion.div>
@@ -150,31 +153,31 @@ export function LandingHero() {
             className="text-center mb-16"
           >
             <h2 className="text-3xl md:text-4xl font-bold mb-4 text-foreground">
-              Built for SRE Teams
+              Your Knowledge Workspace
             </h2>
             <p className="text-muted-foreground max-w-xl mx-auto">
-              Designed with safety-first principles and natural voice
-              interaction
+              Extract insights from YouTube with AI-powered analysis and voice
+              control
             </p>
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-6">
             <FeatureCard
-              icon={<IconWaveform size={24} />}
-              title="Natural Voice Commands"
-              description="Speak naturally to control infrastructure. VoxPilot understands context and intent using Gemini 2.0."
+              icon={<IconYoutube size={24} />}
+              title="Instant Video Analysis"
+              description="Paste any YouTube link and get AI-generated summaries, key takeaways, and abstracts in seconds."
               delay={0}
             />
             <FeatureCard
-              icon={<IconShield size={24} />}
-              title="Safety Confirmations"
-              description="Destructive actions require verbal confirmation. Hear the warning, say 'Yes' to proceed."
+              icon={<IconWaveform size={24} />}
+              title="Voice Commands"
+              description="Speak naturally to analyze videos, search your library, or have summaries read aloud to you."
               delay={0.1}
             />
             <FeatureCard
-              icon={<IconZap size={24} />}
-              title="Real-time Feedback"
-              description="ElevenLabs voice responses confirm every action with natural, human-like speech."
+              icon={<IconBookmark size={24} />}
+              title="Knowledge Library"
+              description="Save analyzed videos to your personal library. Search and revisit insights anytime."
               delay={0.2}
             />
           </div>

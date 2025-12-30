@@ -93,6 +93,7 @@ export default function DashboardPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const restartListeningRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const init = async () => {
@@ -256,31 +257,25 @@ export default function DashboardPage() {
                 // After audio ends, switch to confirming and auto-restart listening
                 audioRef.current!.onended = () => {
                   setOrbState("confirming");
-                  // Auto-restart listening so user can immediately respond
+                  // Use ref to restart listening (avoids dependency issues)
                   setTimeout(() => {
-                    if (recognitionRef.current) {
-                      recognitionRef.current.start();
-                    }
-                  }, 100);
+                    restartListeningRef.current?.();
+                  }, 300);
                 };
               } else {
                 setOrbState("confirming");
                 // If no audio, still auto-restart listening
                 setTimeout(() => {
-                  if (recognitionRef.current) {
-                    recognitionRef.current.start();
-                  }
-                }, 100);
+                  restartListeningRef.current?.();
+                }, 300);
               }
             } catch (error) {
               console.error("Delete confirmation TTS error:", error);
               setOrbState("confirming");
               // Even on error, auto-restart listening
               setTimeout(() => {
-                if (recognitionRef.current) {
-                  recognitionRef.current.start();
-                }
-              }, 100);
+                restartListeningRef.current?.();
+              }, 300);
             }
           } else if (currentVideo) {
             const found = savedVideos.find(
@@ -299,28 +294,23 @@ export default function DashboardPage() {
                   playAudio(audio);
                   audioRef.current!.onended = () => {
                     setOrbState("confirming");
+                    // Use ref to restart listening (avoids dependency issues)
                     setTimeout(() => {
-                      if (recognitionRef.current) {
-                        recognitionRef.current.start();
-                      }
-                    }, 100);
+                      restartListeningRef.current?.();
+                    }, 300);
                   };
                 } else {
                   setOrbState("confirming");
                   setTimeout(() => {
-                    if (recognitionRef.current) {
-                      recognitionRef.current.start();
-                    }
-                  }, 100);
+                    restartListeningRef.current?.();
+                  }, 300);
                 }
               } catch (error) {
                 console.error("Delete confirmation TTS error:", error);
                 setOrbState("confirming");
                 setTimeout(() => {
-                  if (recognitionRef.current) {
-                    recognitionRef.current.start();
-                  }
-                }, 100);
+                  restartListeningRef.current?.();
+                }, 300);
               }
             } else {
               showStatus("Video not in library");
@@ -580,6 +570,24 @@ export default function DashboardPage() {
     recognitionRef.current = recognition;
     recognition.start();
   }, [showStatus, orbState, currentVideo, awaitingConfirmation, executeAction]);
+
+  // Populate the restart listening ref so it can be called from executeAction
+  useEffect(() => {
+    restartListeningRef.current = () => {
+      // Stop any existing recognition first
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // Ignore if already stopped
+        }
+      }
+      // Start fresh after a short delay
+      setTimeout(() => {
+        startListening();
+      }, 200);
+    };
+  }, [startListening]);
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current) {

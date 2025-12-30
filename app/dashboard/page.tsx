@@ -79,24 +79,22 @@ export default function DashboardPage() {
   const [orbState, setOrbState] = useState<OrbState>("idle");
   const [transcript, setTranscript] = useState("");
 
-  // Confirmation state for voice (delete confirmation)
+
   const [awaitingConfirmation, setAwaitingConfirmation] = useState<{
     type: "delete";
     video: SavedContent;
   } | null>(null);
 
-  // UI state
+
   const [statusMessage, setStatusMessage] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [videoToDelete, setVideoToDelete] = useState<SavedContent | null>(null);
 
   // Refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch user and saved content on mount
   useEffect(() => {
     const init = async () => {
       const userData = await getUser();
@@ -110,13 +108,11 @@ export default function DashboardPage() {
     init();
   }, []);
 
-  // Show status message
   const showStatus = useCallback((message: string, duration = 3000) => {
     setStatusMessage(message);
     setTimeout(() => setStatusMessage(""), duration);
   }, []);
 
-  // Stop audio
   const stopAudio = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -144,9 +140,7 @@ export default function DashboardPage() {
     });
   }, []);
 
-  // ============================================
   // UNIFIED ACTION HANDLER - Voice & UI parity
-  // ============================================
   const executeAction = useCallback(
     async (
       intent: Intent,
@@ -248,14 +242,11 @@ export default function DashboardPage() {
         }
 
         case "DELETE_VIDEO": {
-          // For voice: set awaiting confirmation
-          // For UI: the button already sets videoToDelete and opens dialog
           if (context?.video) {
             setAwaitingConfirmation({ type: "delete", video: context.video });
             setOrbState("confirming");
             showStatus("Are you sure? Say yes or no.");
           } else if (currentVideo) {
-            // Delete current video if no specific one provided
             const found = savedVideos.find(
               (v) => v.video_id === currentVideo.videoId
             );
@@ -346,7 +337,6 @@ export default function DashboardPage() {
     [currentVideo, savedVideos, awaitingConfirmation, showStatus, playAudio]
   );
 
-  // Handle URL submission (from input field)
   const handleAnalyze = useCallback(
     async (input: string) => {
       if (!input.trim()) return;
@@ -362,12 +352,10 @@ export default function DashboardPage() {
     [executeAction, showStatus]
   );
 
-  // Save current video (for button click)
   const handleSave = useCallback(async () => {
     await executeAction("SAVE_VIDEO");
   }, [executeAction]);
 
-  // Delete video (for button click - opens dialog)
   const handleDelete = useCallback(async () => {
     if (!videoToDelete) return;
 
@@ -414,9 +402,6 @@ export default function DashboardPage() {
     [showStatus, playAudio]
   );
 
-  // ============================================
-  // VOICE RECOGNITION with parseVoiceIntent
-  // ============================================
   const startListening = useCallback(() => {
     if (typeof window === "undefined") return;
 
@@ -805,8 +790,8 @@ export default function DashboardPage() {
                             className="h-8 px-3"
                           >
                             {currentVideo.summary.confidence === "transcript"
-                              ? "📝 Full"
-                              : "🔍 Inferred"}
+                              ? "Full"
+                              : "Inferred"}
                           </Badge>
                           <Button
                             variant="outline"

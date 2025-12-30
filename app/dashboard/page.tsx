@@ -532,10 +532,15 @@ export default function DashboardPage() {
                     <CardHeader>
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
-                          <CardTitle className="text-xl">
-                            {currentVideo.summary.title}
-                          </CardTitle>
-                          <CardDescription className="mt-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <CardTitle className="text-xl">
+                              {currentVideo.summary.title}
+                            </CardTitle>
+                            <Badge variant={currentVideo.summary.confidence === "transcript" ? "default" : "secondary"}>
+                              {currentVideo.summary.confidence === "transcript" ? "📝 Full Analysis" : "🔍 Inferred"}
+                            </Badge>
+                          </div>
+                          <CardDescription className="mt-0">
                             AI-generated summary
                           </CardDescription>
                         </div>

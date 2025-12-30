@@ -217,6 +217,7 @@ export default function DashboardPage() {
             return;
           }
           setIsAnalyzing(true);
+          setOrbState("processing");
           showStatus("Saving...");
 
           try {
@@ -229,12 +230,26 @@ export default function DashboardPage() {
               showStatus("Saved!");
               const saved = await getSavedContent();
               setSavedVideos(saved);
+
+              // Speak confirmation
+              try {
+                const audio = await speakResponse("Video saved.");
+                if (audio) {
+                  playAudio(audio);
+                } else {
+                  setOrbState("idle");
+                }
+              } catch (e) {
+                setOrbState("idle");
+              }
             } else {
               showStatus(result.message);
+              setOrbState("idle");
             }
           } catch (error) {
             console.error("Save error:", error);
             showStatus("Failed to save");
+            setOrbState("idle");
           } finally {
             setIsAnalyzing(false);
           }
@@ -424,8 +439,12 @@ export default function DashboardPage() {
         }
 
         case "CONFIRM_YES": {
-          if (awaitingConfirmation?.type === "delete") {
-            const video = awaitingConfirmation.video;
+          if (awaitingConfirmation?.type === "delete" || context?.video) {
+            const video = context?.video || awaitingConfirmation?.video;
+            if (!video) {
+              setOrbState("idle");
+              break;
+            }
             setAwaitingConfirmation(null);
             setOrbState("processing");
             showStatus("Deleting...");
@@ -437,10 +456,14 @@ export default function DashboardPage() {
                 showStatus("Deleted!");
 
                 // Speak confirmation
-                const audio = await speakResponse("Deleted.");
-                if (audio) {
-                  playAudio(audio);
-                } else {
+                try {
+                  const audio = await speakResponse("Deleted.");
+                  if (audio) {
+                    playAudio(audio);
+                  } else {
+                    setOrbState("idle");
+                  }
+                } catch (e) {
                   setOrbState("idle");
                 }
               } else {
@@ -452,6 +475,8 @@ export default function DashboardPage() {
               showStatus("Failed to delete");
               setOrbState("idle");
             }
+          } else {
+            setOrbState("idle");
           }
           break;
         }
@@ -848,7 +873,7 @@ export default function DashboardPage() {
                 }
                 size="lg"
                 onClick={orbState === "speaking" ? stopAudio : toggleListening}
-                disabled={orbState === "processing"}
+                disabled={orbState === "processing" || isAnalyzing}
                 className={cn(
                   "px-4",
                   orbState === "listening" && "bg-primary",
@@ -864,7 +889,7 @@ export default function DashboardPage() {
               >
                 {orbState === "listening" ? (
                   <IconMicrophoneOff size={20} />
-                ) : orbState === "processing" ? (
+                ) : orbState === "processing" && !isAnalyzing ? (
                   <IconLoader size={20} className="animate-spin" />
                 ) : orbState === "speaking" ? (
                   <IconX size={20} />
@@ -878,13 +903,14 @@ export default function DashboardPage() {
 
             {/* Voice state and transcript display */}
             <AnimatePresence>
-              {(orbState !== "idle" || transcript) && (
+              {(orbState !== "idle" || transcript) && !isAnalyzing && (
                 <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
                   className={cn(
-                    "absolute top-full mt-2 left-0 right-0 p-3 rounded-xl border backdrop-blur-sm",
+                    "mt-3 p-3 rounded-xl border backdrop-blur-sm origin-top",
                     orbState === "confirming" && awaitingConfirmation
                       ? "bg-red-500/10 border-red-500/30"
                       : "bg-white/90 dark:bg-neutral-900/90 border-black/10 dark:border-white/10"

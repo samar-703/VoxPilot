@@ -10,6 +10,7 @@ import {
   getSavedContent,
   deleteContent,
   readSummaryAloud,
+  speakResponse,
   signOut,
   getUser,
   type VideoSummary,
@@ -79,12 +80,10 @@ export default function DashboardPage() {
   const [orbState, setOrbState] = useState<OrbState>("idle");
   const [transcript, setTranscript] = useState("");
 
-
   const [awaitingConfirmation, setAwaitingConfirmation] = useState<{
     type: "delete";
     video: SavedContent;
   } | null>(null);
-
 
   const [statusMessage, setStatusMessage] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -244,16 +243,85 @@ export default function DashboardPage() {
         case "DELETE_VIDEO": {
           if (context?.video) {
             setAwaitingConfirmation({ type: "delete", video: context.video });
-            setOrbState("confirming");
-            showStatus("Are you sure? Say yes or no.");
+            setOrbState("processing");
+            showStatus("Confirm deletion? Say yes or no.");
+
+            try {
+              // Short confirmation question to save API quota
+              const audio = await speakResponse(
+                "Delete this video? Say yes or no."
+              );
+              if (audio) {
+                playAudio(audio);
+                // After audio ends, switch to confirming and auto-restart listening
+                audioRef.current!.onended = () => {
+                  setOrbState("confirming");
+                  // Auto-restart listening so user can immediately respond
+                  setTimeout(() => {
+                    if (recognitionRef.current) {
+                      recognitionRef.current.start();
+                    }
+                  }, 100);
+                };
+              } else {
+                setOrbState("confirming");
+                // If no audio, still auto-restart listening
+                setTimeout(() => {
+                  if (recognitionRef.current) {
+                    recognitionRef.current.start();
+                  }
+                }, 100);
+              }
+            } catch (error) {
+              console.error("Delete confirmation TTS error:", error);
+              setOrbState("confirming");
+              // Even on error, auto-restart listening
+              setTimeout(() => {
+                if (recognitionRef.current) {
+                  recognitionRef.current.start();
+                }
+              }, 100);
+            }
           } else if (currentVideo) {
             const found = savedVideos.find(
               (v) => v.video_id === currentVideo.videoId
             );
             if (found) {
               setAwaitingConfirmation({ type: "delete", video: found });
-              setOrbState("confirming");
-              showStatus("Delete this video? Say yes or no.");
+              setOrbState("processing");
+              showStatus("Confirm deletion? Say yes or no.");
+
+              try {
+                const audio = await speakResponse(
+                  "Delete this video? Say yes or no."
+                );
+                if (audio) {
+                  playAudio(audio);
+                  audioRef.current!.onended = () => {
+                    setOrbState("confirming");
+                    setTimeout(() => {
+                      if (recognitionRef.current) {
+                        recognitionRef.current.start();
+                      }
+                    }, 100);
+                  };
+                } else {
+                  setOrbState("confirming");
+                  setTimeout(() => {
+                    if (recognitionRef.current) {
+                      recognitionRef.current.start();
+                    }
+                  }, 100);
+                }
+              } catch (error) {
+                console.error("Delete confirmation TTS error:", error);
+                setOrbState("confirming");
+                setTimeout(() => {
+                  if (recognitionRef.current) {
+                    recognitionRef.current.start();
+                  }
+                }, 100);
+              }
             } else {
               showStatus("Video not in library");
             }
@@ -275,13 +343,21 @@ export default function DashboardPage() {
               if (result.success) {
                 setSavedVideos((prev) => prev.filter((v) => v.id !== video.id));
                 showStatus("Deleted!");
+
+                // Speak confirmation
+                const audio = await speakResponse("Deleted.");
+                if (audio) {
+                  playAudio(audio);
+                } else {
+                  setOrbState("idle");
+                }
               } else {
                 showStatus(result.message);
+                setOrbState("idle");
               }
             } catch (error) {
               console.error("Delete error:", error);
               showStatus("Failed to delete");
-            } finally {
               setOrbState("idle");
             }
           }
@@ -290,8 +366,20 @@ export default function DashboardPage() {
 
         case "CANCEL_DELETE": {
           setAwaitingConfirmation(null);
-          setOrbState("idle");
           showStatus("Cancelled");
+
+          try {
+            // Speak cancellation
+            const audio = await speakResponse("Cancelled.");
+            if (audio) {
+              playAudio(audio);
+            } else {
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("Cancel TTS error:", error);
+            setOrbState("idle");
+          }
           break;
         }
 
@@ -321,8 +409,21 @@ export default function DashboardPage() {
         }
 
         case "GREETING": {
-          showStatus("Ready! Say a command or paste a link.");
-          setOrbState("idle");
+          showStatus("Hello! Ready for commands.");
+          setOrbState("processing");
+
+          try {
+            // Short greeting to save API quota
+            const audio = await speakResponse("Hello! Ready.");
+            if (audio) {
+              playAudio(audio);
+            } else {
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("Greeting TTS error:", error);
+            setOrbState("idle");
+          }
           break;
         }
 

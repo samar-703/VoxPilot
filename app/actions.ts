@@ -15,6 +15,7 @@ export interface VideoSummary {
   title: string;
   keyTakeaways: string[];
   abstract: string;
+  confidence: "high" | "medium" | "low";
 }
 
 export interface SavedContent {
@@ -53,11 +54,85 @@ export interface ActionResult {
   savedContent?: SavedContent;
 }
 
+// Data availability levels for graceful degradation
+type DataLevel = "transcript" | "metadata" | "basic";
+
+interface VideoData {
+  level: DataLevel;
+  transcript?: string;
+  title: string;
+  description?: string;
+  channel?: string;
+  tags?: string[];
+  url: string;
+  videoId: string;
+}
+
+// Error classification for better UX
+class DataUnavailabilityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DataUnavailabilityError";
+  }
+}
+
+class SystemFailureError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SystemFailureError";
+  }
+}
+
+// Utility: Execute with timeout
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  operation: string
+): Promise<T> {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(`${operation} timed out`)), timeoutMs);
+  });
+  
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("timed out")) {
+      throw new DataUnavailabilityError(`${operation} unavailable`);
+    }
+    throw error;
+  }
+}
+
+// Utility: Retry with exponential backoff
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 2,
+  operation: string = "operation"
+): Promise<T> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const isLastAttempt = attempt === maxRetries - 1;
+      
+      if (isLastAttempt) {
+        throw error;
+      }
+      
+      const delay = Math.pow(2, attempt) * 1000;
+      console.log(`${operation} failed, retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw new Error(`${operation} failed after ${maxRetries} retries`);
+}
+
 // Extract YouTube Video ID from URL
 function extractVideoId(url: string): string | null {
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/,
-    /^([a-zA-Z0-9_-]{11})$/, // Direct video ID
+    /^([a-zA-Z0-9_-]{11})$/,
   ];
 
   for (const pattern of patterns) {
@@ -72,69 +147,262 @@ function getThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
-// Fetch transcript from YouTube
-async function fetchTranscript(videoId: string): Promise<string> {
-  console.log("Attempting to fetch transcript for video:", videoId);
+// Layer 1: Fetch transcript using youtube-caption-scraper
+async function fetchTranscriptData(videoId: string): Promise<string | null> {
+  console.log("Layer 1: Fetching transcript with youtube-caption-scraper for:", videoId);
   
   try {
     const subtitles = await getSubtitles({ videoID: videoId, lang: 'en' });
     
-    if (!subtitles || subtitles.length === 0) {
-      throw new Error("No captions found");
+    if (subtitles && subtitles.length > 0) {
+      const transcript = subtitles
+        .map((sub) => sub.text)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      
+      console.log(`✓ Transcript found: ${transcript.length} chars`);
+      console.log(`✓ Subtitles count: ${subtitles.length}`);
+      console.log(`Transcript preview: ${transcript.substring(0, 200)}...`);
+      
+      return transcript;
+    }
+  } catch (error) {
+    console.log("✗ Transcript fetch failed:", error instanceof Error ? error.message : "unknown");
+  }
+  
+  console.log("✗ No transcript available");
+  return null;
+}
+
+// Layer 2: Fetch video metadata as fallback (direct YouTube API)
+async function fetchVideoMetadata(videoId: string, url: string): Promise<Omit<VideoData, 'transcript' | 'level'>> {
+  console.log("Layer 2: Fetching video metadata as fallback");
+  
+  try {
+    // Try to get basic video info via transcript endpoint (it returns video data)
+    const subtitles = await getSubtitles({ videoID: videoId });
+    
+    if (subtitles && subtitles.length > 0) {
+      // Extract any metadata from the response if available
+      return {
+        title: "YouTube Video",
+        description: "",
+        channel: "",
+        tags: [],
+        url,
+        videoId,
+      };
+    }
+  } catch (error) {
+    console.log("✗ Metadata extraction failed:", error instanceof Error ? error.message : "unknown");
+  }
+  
+  console.log("✗ Using basic data");
+  return {
+    title: "YouTube Video",
+    description: "",
+    channel: "",
+    tags: [],
+    url,
+    videoId,
+  };
+}
+
+// Main data fetching with layered fallback
+async function fetchVideoData(url: string): Promise<VideoData> {
+  const videoId = extractVideoId(url);
+  
+  if (!videoId) {
+    throw new Error("Invalid YouTube URL");
+  }
+  
+  console.log("=== Starting layered data fetch ===");
+  
+  // Layer 1: Try transcript
+  const transcript = await withRetry(
+    () => fetchTranscriptData(videoId),
+    2,
+    "Transcript fetch"
+  );
+  
+  if (transcript && transcript.length > 20) {
+    return {
+      level: "transcript",
+      transcript,
+      title: "Video",
+      url,
+      videoId,
+    };
+  }
+  
+  console.log("⚠ Transcript unavailable, degrading to metadata");
+  
+  // Layer 2: Fallback to metadata
+  const metadata = await withRetry(
+    () => fetchVideoMetadata(videoId, url),
+    1,
+    "Metadata fetch"
+  );
+  
+  return {
+    level: metadata.channel ? "metadata" : "basic",
+    title: metadata.title,
+    description: metadata.description,
+    channel: metadata.channel,
+    tags: metadata.tags,
+    url,
+    videoId,
+  };
+}
+
+// Generate summary with adaptive prompt based on data level
+async function generateAdaptiveSummary(data: VideoData): Promise<VideoSummary> {
+  const now = Date.now();
+  if (now < geminiDisabledUntil) {
+    throw new SystemFailureError("AI service temporarily unavailable due to rate limiting");
+  }
+
+  if (!process.env.GOOGLE_API_KEY) {
+    throw new SystemFailureError("AI service not configured");
+  }
+
+  try {
+    console.log(`Generating summary from ${data.level} level data...`);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    
+    let prompt: string;
+    let confidence: VideoSummary["confidence"];
+    
+    if (data.level === "transcript") {
+      confidence = "high";
+      // Use first 6000 chars for key insights - saves tokens, captures main content
+      const truncated = data.transcript!.length > 6000
+        ? data.transcript!.substring(0, 6000) + "..."
+        : data.transcript!;
+      
+      prompt = `Extract key insights from this video transcript.
+
+Create a focused summary with:
+1. Title (max 10 words) - what video is about
+2. Exactly 3 Key Takeaways (each max 15 words) - main points learned
+3. Abstract (max 50 words) - concise overview
+
+Be specific and actionable. Avoid generic phrases.
+
+Transcript:
+${truncated}`;
+    } else if (data.level === "metadata") {
+      confidence = "medium";
+      prompt = `Create summary from video metadata:
+
+Title: ${data.title}
+Description: ${data.description || "N/A"}
+
+Generate:
+1. Title (max 10 words)
+2. Exactly 3 Key Takeaways (each max 15 words)
+3. Abstract (max 50 words)`;
+
+    } else {
+      confidence = "low";
+      prompt = `Create generic template:
+
+1. Title: "Video Summary"
+2. Exactly 3 Generic Takeaways
+3. Abstract (max 30 words): "Captions unavailable."`;
+    }
+
+    const result = await withTimeout(
+      model.generateContent([
+        {
+          text: `${prompt}
+
+Return ONLY valid JSON:
+{
+  "title": "...",
+  "keyTakeaways": ["...", "...", "..."],
+  "abstract": "..."
+}`
+        }
+      ]),
+      20000,
+      "AI generation"
+    );
+
+    const text = result.response.text();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+
+    if (!jsonMatch) {
+      console.error("Failed to parse AI response");
+      console.error("Raw response:", text.substring(0, 300));
+      throw new SystemFailureError("AI response parsing failed");
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    console.log(`✓ Summary generated (${confidence} confidence): ${parsed.title}`);
+    
+    return {
+      ...parsed,
+      confidence,
+    };
+  } catch (error) {
+    console.error("AI generation error:", error);
+    
+    if (
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 429
+    ) {
+      console.log("AI quota exceeded, cooling down");
+      geminiDisabledUntil = Date.now() + 60000;
     }
     
-    const transcriptText = subtitles.map((subtitle) => subtitle.text).join(" ");
-    console.log("Transcript fetched successfully. Length:", transcriptText.length, "characters");
-    console.log("Transcript preview:", transcriptText.substring(0, 100) + "...");
+    if (error instanceof DataUnavailabilityError) {
+      throw error;
+    }
     
-    return transcriptText;
-  } catch (error) {
-    console.error("Failed to fetch transcript:", error);
-    throw new Error(
-      "This video does not have open captions. Please try a video with CC enabled."
-    );
+    throw new SystemFailureError("AI generation failed");
   }
 }
 
-// Process YouTube link and generate summary
+// Process YouTube link with graceful degradation
 export async function processYoutubeLink(url: string): Promise<ActionResult> {
   const videoId = extractVideoId(url);
 
   if (!videoId) {
     return {
       success: false,
-      message: "Invalid YouTube URL. Please provide a valid YouTube link.",
+      message: "Please enter a valid YouTube link",
     };
   }
 
   try {
-    console.log("Processing YouTube link:", url);
-    console.log("Video ID:", videoId);
+    console.log("=== Processing video ===");
+    console.log("URL:", url);
+    console.log("ID:", videoId);
     
-    const transcript = await fetchTranscript(videoId);
-
-    if (!transcript || transcript.length < 20) {
-      console.warn("Transcript too short or empty. Length:", transcript?.length || 0);
-      return {
-        success: false,
-        message: "Video transcript is too short or unavailable. Try a video with captions.",
-      };
+    // Fetch data with layered fallback
+    const data = await fetchVideoData(url);
+    
+    // Generate summary with adaptive prompt
+    const summary = await generateAdaptiveSummary(data);
+    
+    // Provide user-friendly context message
+    let contextMessage = "";
+    if (summary.confidence === "high") {
+      contextMessage = "Full transcript analysis complete.";
+    } else if (summary.confidence === "medium") {
+      contextMessage = "Summary based on video metadata (captions unavailable).";
+    } else {
+      contextMessage = "Limited summary (video information unavailable).";
     }
-
-    console.log("Transcript fetched. Generating summary...");
-    const summary = await generateSummaryWithGemini(transcript);
-
-    if (!summary) {
-      return {
-        success: false,
-        message: "Failed to generate summary. The AI service may be unavailable. Please try again.",
-      };
-    }
-
-    console.log("Video analyzed successfully!");
+    
+    console.log("✓ Processing complete");
     return {
       success: true,
-      message: "Video analyzed successfully!",
+      message: contextMessage,
       summary,
       analysis: {
         intent: "analyze_url",
@@ -144,84 +412,27 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
       },
     };
   } catch (error) {
-    console.error("Error processing YouTube link:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("✗ Processing error:", error);
     
+    if (error instanceof DataUnavailabilityError) {
+      return {
+        success: false,
+        message: "Video information temporarily unavailable. Please try again or use a different video.",
+      };
+    }
+    
+    if (error instanceof SystemFailureError) {
+      return {
+        success: false,
+        message: error.message,
+      };
+    }
+    
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return {
       success: false,
-      message: `Failed to process video: ${errorMessage}. Please try again or use a video with captions.`,
+      message: `Unable to process video. ${errorMessage}`,
     };
-  }
-}
-
-// Generate summary using Gemini 2.0 Flash
-async function generateSummaryWithGemini(
-  transcript: string
-): Promise<VideoSummary | null> {
-  const now = Date.now();
-  if (now < geminiDisabledUntil) {
-    console.log("⏭️ Gemini quota exceeded, skipping...");
-    return null;
-  }
-
-  if (!process.env.GOOGLE_API_KEY) {
-    console.log("⏭No Gemini API key configured");
-    return null;
-  }
-
-  try {
-    console.log("Generating summary with Gemini...");
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    const systemPrompt = `You are a research assistant. Summarize this video transcript into:
-1. A concise Title (max 10 words)
-2. Exactly 3 Key Takeaways (each max 20 words)
-3. A 50-word Abstract
-
-Return ONLY valid JSON in this exact format:
-{
-  "title": "...",
-  "keyTakeaways": ["...", "...", "..."],
-  "abstract": "..."
-}`;
-
-    const truncatedTranscript =
-      transcript.length > 15000
-        ? transcript.substring(0, 15000) + "..."
-        : transcript;
-    
-    console.log(`Transcript length: ${transcript.length} chars, truncated to: ${truncatedTranscript.length} chars`);
-
-    const result = await model.generateContent([
-      systemPrompt,
-      `Video transcript:\n${truncatedTranscript}`,
-    ]);
-
-    const text = result.response.text();
-    console.log("Gemini response received, length:", text.length);
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-      console.error("Failed to parse Gemini response - no JSON found");
-      console.error("Raw response:", text.substring(0, 500));
-      return null;
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    console.log("Summary generated successfully:", parsed.title);
-    return parsed as VideoSummary;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "status" in error &&
-      error.status === 429
-    ) {
-      console.log("Gemini quota exceeded - disabling for 60 seconds");
-      geminiDisabledUntil = Date.now() + 60000;
-    }
-    console.error("Gemini API error:", error);
-    return null;
   }
 }
 

@@ -572,13 +572,14 @@ export async function parseVoiceIntent(
 
   // If awaiting confirmation, check for yes/no first
   if (awaitingConfirmation) {
-    if (lower.match(/^(yes|yeah|yep|confirm|do it|proceed|okay|ok|sure)$/)) {
+    // Match yes/no anywhere in the transcript (less strict for voice recognition)
+    if (lower.match(/\b(yes|yeah|yep|confirm|do it|proceed|okay|ok|sure)\b/)) {
       return {
         intent: "CONFIRM_YES",
         response: "Confirmed",
       };
     }
-    if (lower.match(/^(no|nope|cancel|stop|never mind|nevermind)$/)) {
+    if (lower.match(/\b(no|nope|cancel|stop|never mind|nevermind)\b/)) {
       return {
         intent: "CANCEL_DELETE",
         response: "Cancelled",

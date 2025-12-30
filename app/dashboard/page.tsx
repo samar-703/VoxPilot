@@ -247,35 +247,85 @@ export default function DashboardPage() {
             setOrbState("processing");
             showStatus("Confirm deletion? Say yes or no.");
 
+            // Helper to start listening for confirmation
+            const startConfirmListening = () => {
+              if (typeof window === "undefined") return;
+              const SR =
+                (window as any).SpeechRecognition ||
+                (window as any).webkitSpeechRecognition;
+              if (!SR) return;
+
+              if (recognitionRef.current) {
+                try {
+                  recognitionRef.current.stop();
+                } catch (e) {}
+              }
+
+              const rec = new SR();
+              rec.continuous = false;
+              rec.interimResults = true;
+              rec.lang = "en-US";
+
+              rec.onstart = () => {
+                setOrbState("confirming");
+                setTranscript("");
+              };
+
+              rec.onresult = async (event: SpeechRecognitionEvent) => {
+                const resultItem = event.results[event.results.length - 1];
+                const text = resultItem[0].transcript;
+                setTranscript(text);
+
+                if (resultItem.isFinal) {
+                  console.log("Confirmation voice input:", text);
+                  setOrbState("processing");
+
+                  const analysis = await parseVoiceIntent(
+                    text,
+                    currentVideo?.summary,
+                    { type: "delete" }
+                  );
+
+                  console.log("Parsed confirmation:", analysis);
+                  await executeAction(analysis.intent, {
+                    video: context.video,
+                  });
+                  setTranscript("");
+                }
+              };
+
+              rec.onerror = (event: SpeechRecognitionErrorEvent) => {
+                console.error("Confirmation error:", event.error);
+                if (event.error !== "aborted")
+                  showStatus("Voice error. Try again.");
+                setOrbState("confirming");
+              };
+
+              rec.onend = () => {
+                // Stay in confirming state so user can click mic again if needed
+              };
+
+              recognitionRef.current = rec;
+              rec.start();
+            };
+
             try {
-              // Short confirmation question to save API quota
               const audio = await speakResponse(
                 "Delete this video? Say yes or no."
               );
               if (audio) {
                 playAudio(audio);
-                // After audio ends, switch to confirming and auto-restart listening
                 audioRef.current!.onended = () => {
-                  setOrbState("confirming");
-                  // Use ref to restart listening (avoids dependency issues)
-                  setTimeout(() => {
-                    restartListeningRef.current?.();
-                  }, 300);
+                  setTimeout(startConfirmListening, 300);
                 };
               } else {
                 setOrbState("confirming");
-                // If no audio, still auto-restart listening
-                setTimeout(() => {
-                  restartListeningRef.current?.();
-                }, 300);
+                setTimeout(startConfirmListening, 300);
               }
             } catch (error) {
               console.error("Delete confirmation TTS error:", error);
               setOrbState("confirming");
-              // Even on error, auto-restart listening
-              setTimeout(() => {
-                restartListeningRef.current?.();
-              }, 300);
+              setTimeout(startConfirmListening, 300);
             }
           } else if (currentVideo) {
             const found = savedVideos.find(
@@ -286,6 +336,66 @@ export default function DashboardPage() {
               setOrbState("processing");
               showStatus("Confirm deletion? Say yes or no.");
 
+              // Helper to start listening for confirmation
+              const startConfirmListening = () => {
+                if (typeof window === "undefined") return;
+                const SR =
+                  (window as any).SpeechRecognition ||
+                  (window as any).webkitSpeechRecognition;
+                if (!SR) return;
+
+                if (recognitionRef.current) {
+                  try {
+                    recognitionRef.current.stop();
+                  } catch (e) {}
+                }
+
+                const rec = new SR();
+                rec.continuous = false;
+                rec.interimResults = true;
+                rec.lang = "en-US";
+
+                rec.onstart = () => {
+                  setOrbState("confirming");
+                  setTranscript("");
+                };
+
+                rec.onresult = async (event: SpeechRecognitionEvent) => {
+                  const resultItem = event.results[event.results.length - 1];
+                  const text = resultItem[0].transcript;
+                  setTranscript(text);
+
+                  if (resultItem.isFinal) {
+                    console.log("Confirmation voice input:", text);
+                    setOrbState("processing");
+
+                    const analysis = await parseVoiceIntent(
+                      text,
+                      currentVideo?.summary,
+                      { type: "delete" }
+                    );
+
+                    console.log("Parsed confirmation:", analysis);
+                    await executeAction(analysis.intent, { video: found });
+                    setTranscript("");
+                  }
+                };
+
+                rec.onerror = (event: SpeechRecognitionErrorEvent) => {
+                  console.error("Confirmation error:", event.error);
+                  if (event.error !== "aborted")
+                    showStatus("Voice error. Try again.");
+                  setOrbState("confirming");
+                };
+
+                rec.onend = () => {
+                  // Stay in confirming state
+                };
+
+                recognitionRef.current = rec;
+                rec.start();
+              };
+
               try {
                 const audio = await speakResponse(
                   "Delete this video? Say yes or no."
@@ -293,24 +403,16 @@ export default function DashboardPage() {
                 if (audio) {
                   playAudio(audio);
                   audioRef.current!.onended = () => {
-                    setOrbState("confirming");
-                    // Use ref to restart listening (avoids dependency issues)
-                    setTimeout(() => {
-                      restartListeningRef.current?.();
-                    }, 300);
+                    setTimeout(startConfirmListening, 300);
                   };
                 } else {
                   setOrbState("confirming");
-                  setTimeout(() => {
-                    restartListeningRef.current?.();
-                  }, 300);
+                  setTimeout(startConfirmListening, 300);
                 }
               } catch (error) {
                 console.error("Delete confirmation TTS error:", error);
                 setOrbState("confirming");
-                setTimeout(() => {
-                  restartListeningRef.current?.();
-                }, 300);
+                setTimeout(startConfirmListening, 300);
               }
             } else {
               showStatus("Video not in library");

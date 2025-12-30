@@ -314,6 +314,7 @@ export default function DashboardPage() {
             console.error("List error:", error);
             showStatus("Failed to load library");
           }
+          setOrbState("idle");
           break;
         }
 
@@ -324,17 +325,20 @@ export default function DashboardPage() {
           } else {
             showStatus("No video loaded");
           }
+          setOrbState("idle");
           break;
         }
 
         case "GREETING": {
           showStatus("Ready! Say a command or paste a link.");
+          setOrbState("idle");
           break;
         }
 
         case "UNCLEAR":
         default: {
           showStatus("Say: read summary, save, delete, or paste a link");
+          setOrbState("idle");
           break;
         }
       }
@@ -636,23 +640,103 @@ export default function DashboardPage() {
                 )}
                 <span className="ml-2 hidden sm:inline">Analyze</span>
               </Button>
+
+              {/* Voice Input Button */}
+              <Button
+                variant={
+                  orbState === "listening"
+                    ? "default"
+                    : orbState === "confirming"
+                    ? "destructive"
+                    : "outline"
+                }
+                size="lg"
+                onClick={orbState === "speaking" ? stopAudio : toggleListening}
+                disabled={orbState === "processing"}
+                className={cn(
+                  "px-4",
+                  orbState === "listening" && "bg-primary",
+                  orbState === "speaking" && "bg-green-500 hover:bg-green-600"
+                )}
+                title={
+                  orbState === "idle"
+                    ? "Click to speak"
+                    : orbState === "listening"
+                    ? "Stop listening"
+                    : ""
+                }
+              >
+                {orbState === "listening" ? (
+                  <IconMicrophoneOff size={20} />
+                ) : orbState === "processing" ? (
+                  <IconLoader size={20} className="animate-spin" />
+                ) : orbState === "speaking" ? (
+                  <IconX size={20} />
+                ) : orbState === "confirming" ? (
+                  <IconMicrophoneOff size={20} />
+                ) : (
+                  <IconMicrophone size={20} />
+                )}
+              </Button>
             </div>
 
-            {/* Transcript display */}
+            {/* Voice state and transcript display */}
             <AnimatePresence>
-              {transcript && orbState === "listening" && (
+              {(orbState !== "idle" || transcript) && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  className="absolute top-full mt-2 left-0 right-0 p-3 rounded-xl bg-white/90 dark:bg-neutral-900/90 border border-black/10 dark:border-white/10 backdrop-blur-sm"
+                  className={cn(
+                    "absolute top-full mt-2 left-0 right-0 p-3 rounded-xl border backdrop-blur-sm",
+                    orbState === "confirming" && awaitingConfirmation
+                      ? "bg-red-500/10 border-red-500/30"
+                      : "bg-white/90 dark:bg-neutral-900/90 border-black/10 dark:border-white/10"
+                  )}
                 >
-                  <p className="text-sm text-muted-foreground">
-                    <span className="text-foreground font-medium">
-                      Hearing:
-                    </span>{" "}
-                    {transcript}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    {orbState === "listening" && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                        <span className="text-sm font-medium text-foreground">
+                          Listening...
+                        </span>
+                      </>
+                    )}
+                    {orbState === "processing" && (
+                      <>
+                        <IconLoader
+                          size={14}
+                          className="animate-spin text-muted-foreground"
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          Processing...
+                        </span>
+                      </>
+                    )}
+                    {orbState === "speaking" && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                        <span className="text-sm font-medium text-green-600 dark:text-green-400">
+                          Speaking...
+                        </span>
+                      </>
+                    )}
+                    {orbState === "confirming" && awaitingConfirmation && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        <span className="text-sm font-medium text-red-600 dark:text-red-400">
+                          Say YES or NO
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {transcript && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      <span className="text-foreground/70">Heard:</span>{" "}
+                      {transcript}
+                    </p>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -704,27 +788,26 @@ export default function DashboardPage() {
                     <CardHeader>
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <CardTitle className="text-xl">
-                              {currentVideo.summary.title}
-                            </CardTitle>
-                            <Badge
-                              variant={
-                                currentVideo.summary.confidence === "transcript"
-                                  ? "default"
-                                  : "secondary"
-                              }
-                            >
-                              {currentVideo.summary.confidence === "transcript"
-                                ? "📝 Full Analysis"
-                                : "🔍 Inferred"}
-                            </Badge>
-                          </div>
+                          <CardTitle className="text-xl mb-1">
+                            {currentVideo.summary.title}
+                          </CardTitle>
                           <CardDescription className="mt-0">
                             AI-generated summary
                           </CardDescription>
                         </div>
                         <div className="flex items-center gap-2">
+                          <Badge
+                            variant={
+                              currentVideo.summary.confidence === "transcript"
+                                ? "default"
+                                : "secondary"
+                            }
+                            className="h-8 px-3"
+                          >
+                            {currentVideo.summary.confidence === "transcript"
+                              ? "📝 Full"
+                              : "🔍 Inferred"}
+                          </Badge>
                           <Button
                             variant="outline"
                             size="sm"
@@ -928,145 +1011,6 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
-
-      {/* Voice Orb */}
-      <div className="fixed bottom-8 right-8 z-50">
-        <div className="relative">
-          {/* Listening rings */}
-          {orbState === "listening" && (
-            <>
-              <motion.div
-                className="absolute inset-[-20px] rounded-full bg-primary/20"
-                animate={{
-                  scale: [1, 1.3, 1],
-                  opacity: [0.5, 0.2, 0.5],
-                }}
-                transition={{
-                  duration: 2,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
-              />
-              <motion.div
-                className="absolute inset-[-10px] rounded-full border-2 border-primary/30"
-                animate={{
-                  scale: [1, 1.2, 1],
-                  opacity: [0.3, 0.6, 0.3],
-                }}
-                transition={{
-                  duration: 1.5,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
-              />
-            </>
-          )}
-
-          {/* Confirming rings (red for delete) */}
-          {orbState === "confirming" && (
-            <>
-              <motion.div
-                className="absolute inset-[-20px] rounded-full bg-red-500/20"
-                animate={{
-                  scale: [1, 1.3, 1],
-                  opacity: [0.5, 0.8, 0.5],
-                }}
-                transition={{
-                  duration: 1,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
-              />
-              <motion.div
-                className="absolute inset-[-10px] rounded-full border-2 border-red-500/50"
-                animate={{
-                  scale: [1, 1.15, 1],
-                  opacity: [0.4, 0.7, 0.4],
-                }}
-                transition={{
-                  duration: 0.8,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
-              />
-            </>
-          )}
-
-          {/* Processing spinner */}
-          {orbState === "processing" && (
-            <motion.div
-              className="absolute inset-[-8px] rounded-full border-2 border-primary/50 border-t-transparent"
-              animate={{ rotate: 360 }}
-              transition={{
-                duration: 1,
-                repeat: Infinity,
-                ease: "linear",
-              }}
-            />
-          )}
-
-          {/* Speaking waves */}
-          {orbState === "speaking" && (
-            <motion.div
-              className="absolute inset-[-12px] rounded-full border-2 border-green-500/50"
-              animate={{
-                scale: [1, 1.1, 1],
-              }}
-              transition={{
-                duration: 0.5,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-            />
-          )}
-
-          {/* Main button */}
-          <Button
-            variant="glow"
-            size="icon"
-            className={cn(
-              "w-14 h-14 rounded-full transition-all duration-300",
-              orbState === "listening" && "bg-primary hover:bg-primary",
-              orbState === "confirming" && "bg-red-500 hover:bg-red-600",
-              orbState === "speaking" && "bg-green-500 hover:bg-green-600"
-            )}
-            onClick={orbState === "speaking" ? stopAudio : toggleListening}
-            disabled={orbState === "processing"}
-          >
-            {orbState === "listening" || orbState === "confirming" ? (
-              <IconMicrophoneOff size={24} />
-            ) : orbState === "processing" ? (
-              <IconLoader size={24} className="animate-spin" />
-            ) : orbState === "speaking" ? (
-              <IconX size={24} />
-            ) : (
-              <IconMicrophone size={24} />
-            )}
-          </Button>
-        </div>
-
-        {/* State label */}
-        <AnimatePresence>
-          {orbState !== "idle" && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              className={cn(
-                "absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 rounded-full text-white text-xs backdrop-blur-sm",
-                orbState === "confirming"
-                  ? "bg-red-500/90"
-                  : "bg-black/80 dark:bg-white/10"
-              )}
-            >
-              {orbState === "listening" && "Listening... (Space to stop)"}
-              {orbState === "confirming" && "Say YES or NO"}
-              {orbState === "processing" && "Processing..."}
-              {orbState === "speaking" && "Speaking... (ESC to stop)"}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

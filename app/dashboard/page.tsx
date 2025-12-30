@@ -109,6 +109,15 @@ export default function DashboardPage() {
     setTimeout(() => setStatusMessage(""), duration);
   }, []);
 
+  // Stop audio
+  const stopAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setOrbState("idle");
+    }
+  }, []);
+
   // Play audio
   const playAudio = useCallback((audioData: string) => {
     if (audioRef.current) {
@@ -335,6 +344,34 @@ export default function DashboardPage() {
       startListening();
     }
   }, [orbState, startListening, stopListening]);
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Spacebar: toggle voice listening (only when not focused on input)
+      if (e.code === "Space" && document.activeElement === document.body) {
+        e.preventDefault();
+        if (orbState === "idle") {
+          startListening();
+        } else if (orbState === "listening") {
+          stopListening();
+        }
+      }
+      
+      // ESC: stop audio or listening
+      if (e.code === "Escape") {
+        e.preventDefault();
+        if (orbState === "listening") {
+          stopListening();
+        } else if (orbState === "speaking") {
+          stopAudio();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [orbState, startListening, stopListening, stopAudio]);
 
   // Sign out
   const handleSignOut = useCallback(async () => {
@@ -777,13 +814,15 @@ export default function DashboardPage() {
               orbState === "listening" && "bg-primary hover:bg-primary",
               orbState === "speaking" && "bg-green-500 hover:bg-green-600"
             )}
-            onClick={toggleListening}
-            disabled={orbState === "processing" || orbState === "speaking"}
+            onClick={orbState === "speaking" ? stopAudio : toggleListening}
+            disabled={orbState === "processing"}
           >
             {orbState === "listening" ? (
               <IconMicrophoneOff size={24} />
             ) : orbState === "processing" ? (
               <IconLoader size={24} className="animate-spin" />
+            ) : orbState === "speaking" ? (
+              <IconX size={24} />
             ) : (
               <IconMicrophone size={24} />
             )}
@@ -799,9 +838,9 @@ export default function DashboardPage() {
               exit={{ opacity: 0, y: 10 }}
               className="absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 rounded-full bg-black/80 dark:bg-white/10 text-white text-xs backdrop-blur-sm"
             >
-              {orbState === "listening" && "Listening..."}
+              {orbState === "listening" && "Listening... (Press Space to stop)"}
               {orbState === "processing" && "Processing..."}
-              {orbState === "speaking" && "Speaking..."}
+              {orbState === "speaking" && "Speaking... (Press ESC to stop)"}
             </motion.div>
           )}
         </AnimatePresence>

@@ -4,10 +4,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { YoutubeTranscript } from "youtube-transcript";
 import { createClient } from "@/lib/supabase/server";
 
-// Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
 
-// Track Gemini failures to skip retrying when quota exceeded
 let geminiDisabledUntil = 0;
 
 // Types
@@ -15,7 +13,8 @@ export interface VideoSummary {
   title: string;
   keyTakeaways: string[];
   abstract: string;
-  confidence: "high" | "medium" | "low";
+  confidence: "transcript" | "inferred";
+  dataSource: "transcript" | "metadata";
 }
 
 export interface SavedContent {
@@ -54,30 +53,21 @@ export interface ActionResult {
   savedContent?: SavedContent;
 }
 
-type DataLevel = "transcript" | "basic";
-
-interface VideoData {
-  level: DataLevel;
-  transcript?: string;
-  title: string;
-  url: string;
+interface VideoMetadata {
   videoId: string;
+  url: string;
+  title?: string;
+  description?: string;
+  channelName?: string;
 }
 
-class DataUnavailabilityError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DataUnavailabilityError";
-  }
+interface TranscriptResult {
+  success: boolean;
+  text?: string;
+  reason?: string;
 }
 
-class SystemFailureError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SystemFailureError";
-  }
-}
-
+// Utility functions
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number
@@ -85,11 +75,10 @@ async function withTimeout<T>(
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => reject(new Error("timeout")), timeoutMs);
   });
-  
+
   return Promise.race([promise, timeoutPromise]);
 }
 
-// Extract YouTube Video ID
 function extractVideoId(url: string): string | null {
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/,
@@ -103,126 +92,236 @@ function extractVideoId(url: string): string | null {
   return null;
 }
 
-// Get YouTube thumbnail URL
 function getThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
-// Simple, robust transcript fetching
-async function fetchTranscriptData(videoId: string): Promise<string | null> {
-  console.log("Fetching transcript for:", videoId);
-  
+// Fetch transcript - returns result object instead of throwing
+async function fetchTranscript(videoId: string): Promise<TranscriptResult> {
+  console.log("Attempting transcript fetch for:", videoId);
+
   try {
-    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
-    
-    if (transcript && transcript.length > 0) {
-      const text = transcript.map((item) => item.text).join(" ").trim();
-      console.log(`✓ Transcript found: ${text.length} chars`);
-      console.log(`Preview: ${text.substring(0, 150)}...`);
-      return text;
+    const transcript = await withTimeout(
+      YoutubeTranscript.fetchTranscript(videoId),
+      15000
+    );
+
+    if (!transcript || transcript.length === 0) {
+      console.log("Transcript empty");
+      return {
+        success: false,
+        reason: "Transcript array is empty",
+      };
     }
+
+    const text = transcript.map((item) => item.text).join(" ").trim();
+
+    if (text.length < 50) {
+      console.log(`Transcript too short: ${text.length} chars`);
+      return {
+        success: false,
+        reason: `Transcript too short (${text.length} chars)`,
+      };
+    }
+
+    console.log(`✓ Transcript fetched: ${text.length} chars`);
+    return {
+      success: true,
+      text,
+    };
   } catch (error) {
-    console.log("✗ Failed:", error instanceof Error ? error.message : "unknown");
+    const reason =
+      error instanceof Error ? error.message : "Unknown transcript error";
+    console.log(`Transcript fetch failed: ${reason}`);
+    return {
+      success: false,
+      reason,
+    };
   }
-  
-  return null;
 }
 
-// Generate summary from transcript
-async function generateAdaptiveSummary(data: VideoData): Promise<VideoSummary> {
-  const now = Date.now();
-  if (now < geminiDisabledUntil) {
-    throw new SystemFailureError("AI service temporarily unavailable");
-  }
-
-  if (!process.env.GOOGLE_API_KEY) {
-    throw new SystemFailureError("AI service not configured");
-  }
+// Fetch video metadata from YouTube oEmbed API
+async function fetchVideoMetadata(
+  videoId: string,
+  url: string
+): Promise<VideoMetadata> {
+  console.log("Fetching video metadata for:", videoId);
 
   try {
-    console.log(`Generating summary from ${data.level} level data...`);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-    
-    let prompt: string;
-    let confidence: VideoSummary["confidence"];
-    
-    if (data.level === "transcript") {
-      confidence = "high";
-      const truncated = data.transcript!.length > 6000
-        ? data.transcript!.substring(0, 6000) + "..."
-        : data.transcript!;
-      
-      prompt = `Extract key insights from this video transcript.
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(
+      url
+    )}&format=json`;
 
-Create a focused summary:
-1. Title (max 10 words) - what video is about
-2. Exactly 3 Key Takeaways (each max 15 words) - main points
-3. Abstract (max 50 words) - concise overview
+    const response = await withTimeout(fetch(oembedUrl), 8000);
 
-Be specific. Avoid generic phrases.
+    if (response.ok) {
+      const data = await response.json();
+      console.log("✓ Metadata fetched:", {
+        title: data.title?.substring(0, 50),
+        author: data.author_name,
+      });
+
+      return {
+        videoId,
+        url,
+        title: data.title || "Untitled Video",
+        channelName: data.author_name || "Unknown Channel",
+        description: "", // oEmbed doesn't provide description
+      };
+    }
+  } catch (error) {
+    console.log(
+      "Metadata fetch failed:",
+      error instanceof Error ? error.message : "Unknown error"
+    );
+  }
+
+  // Fallback metadata
+  return {
+    videoId,
+    url,
+    title: "YouTube Video",
+    channelName: "Unknown Channel",
+    description: "",
+  };
+}
+
+// Generate summary from transcript (high confidence)
+async function generateTranscriptSummary(
+  transcript: string,
+  metadata: VideoMetadata
+): Promise<VideoSummary> {
+  console.log("Generating transcript-based summary...");
+
+  const truncated =
+    transcript.length > 6000 ? transcript.substring(0, 6000) + "..." : transcript;
+
+  const prompt = `Analyze this YouTube video transcript and extract key insights.
+
+Video Title: ${metadata.title}
+Channel: ${metadata.channelName}
 
 Transcript:
-${truncated}`;
-    } else {
-      confidence = "low";
-      prompt = `Create generic summary:
-1. Title: "Video Summary"
-2. Exactly 3 Generic Takeaways
-3. Abstract (max 30 words): "Captions unavailable."`;
-    }
+${truncated}
 
-    const result = await withTimeout(
-      model.generateContent([
-        {
-          text: `${prompt}
+Create a structured summary:
+1. Title (max 10 words) - clear, specific title based on content
+2. Exactly 3 Key Takeaways (each 12-15 words) - concrete, actionable insights
+3. Abstract (40-50 words) - concise overview of main points
 
-Return ONLY JSON:
+Be specific and avoid generic language. Focus on unique insights from this video.
+
+Return ONLY valid JSON in this exact format:
 {
   "title": "...",
   "keyTakeaways": ["...", "...", "..."],
   "abstract": "..."
-}`
-        }
-      ]),
-      20000
-    );
+}`;
 
-    const text = result.response.text();
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-    if (!jsonMatch) {
-      console.error("Failed to parse AI response");
-      throw new SystemFailureError("AI response parsing failed");
-    }
+  const result = await withTimeout(
+    model.generateContent([{ text: prompt }]),
+    25000
+  );
 
-    const parsed = JSON.parse(jsonMatch[0]);
-    console.log(`✓ Summary generated (${confidence} confidence): ${parsed.title}`);
-    
-    return {
-      ...parsed,
-      confidence,
-    };
-  } catch (error) {
-    console.error("AI generation error:", error);
-    
-    if (
-      error &&
-      typeof error === "object" &&
-      "status" in error &&
-      error.status === 429
-    ) {
-      geminiDisabledUntil = Date.now() + 60000;
-    }
-    
-    if (error instanceof DataUnavailabilityError) {
-      throw error;
-    }
-    
-    throw new SystemFailureError("AI generation failed");
+  const text = result.response.text();
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+
+  if (!jsonMatch) {
+    throw new Error("Failed to parse Gemini response as JSON");
   }
+
+  const parsed = JSON.parse(jsonMatch[0]);
+
+  // Validate structure
+  if (
+    !parsed.title ||
+    !Array.isArray(parsed.keyTakeaways) ||
+    parsed.keyTakeaways.length !== 3 ||
+    !parsed.abstract
+  ) {
+    throw new Error("Invalid summary structure from Gemini");
+  }
+
+  console.log("✓ Transcript summary generated");
+
+  return {
+    title: parsed.title,
+    keyTakeaways: parsed.keyTakeaways,
+    abstract: parsed.abstract,
+    confidence: "transcript",
+    dataSource: "transcript",
+  };
 }
 
-// Main video processing
+// Generate summary from metadata only (inferred)
+async function generateMetadataSummary(
+  metadata: VideoMetadata
+): Promise<VideoSummary> {
+  console.log("🤖 Generating metadata-inferred summary...");
+
+  const prompt = `A user wants to analyze this YouTube video, but captions are unavailable.
+
+Video Information:
+- Title: ${metadata.title}
+- Channel: ${metadata.channelName}
+- URL: ${metadata.url}
+
+Based ONLY on the title and channel name, infer what this video is likely about and create a reasonable summary.
+
+Create a structured summary:
+1. Title (max 10 words) - based on the video title, make it clear and descriptive
+2. Exactly 3 Key Takeaways (each 12-15 words) - infer likely main points based on title/channel
+3. Abstract (40-50 words) - brief overview of what the video appears to cover
+
+Be honest that this is inferred. Use phrases like "appears to cover", "likely discusses", "seems to focus on".
+
+Return ONLY valid JSON in this exact format:
+{
+  "title": "...",
+  "keyTakeaways": ["...", "...", "..."],
+  "abstract": "..."
+}`;
+
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+
+  const result = await withTimeout(
+    model.generateContent([{ text: prompt }]),
+    20000
+  );
+
+  const text = result.response.text();
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+
+  if (!jsonMatch) {
+    throw new Error("Failed to parse Gemini response as JSON");
+  }
+
+  const parsed = JSON.parse(jsonMatch[0]);
+
+  // Validate structure
+  if (
+    !parsed.title ||
+    !Array.isArray(parsed.keyTakeaways) ||
+    parsed.keyTakeaways.length !== 3 ||
+    !parsed.abstract
+  ) {
+    throw new Error("Invalid summary structure from Gemini");
+  }
+
+  console.log("✓ Metadata-inferred summary generated");
+
+  return {
+    title: parsed.title,
+    keyTakeaways: parsed.keyTakeaways,
+    abstract: parsed.abstract,
+    confidence: "inferred",
+    dataSource: "metadata",
+  };
+}
+
+// Main video processing with fail-soft fallback
 export async function processYoutubeLink(url: string): Promise<ActionResult> {
   const videoId = extractVideoId(url);
 
@@ -233,33 +332,54 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
     };
   }
 
-  try {
-    console.log("=== Processing video ===");
-    console.log("URL:", url);
-    console.log("ID:", videoId);
-    
-    const transcript = await fetchTranscriptData(videoId);
+  // Check if Gemini is temporarily disabled
+  const now = Date.now();
+  if (now < geminiDisabledUntil) {
+    return {
+      success: false,
+      message: "AI service temporarily unavailable. Please try again in a moment.",
+    };
+  }
 
-    if (!transcript || transcript.length < 20) {
-      console.warn("Transcript unavailable or too short");
-      return {
-        success: false,
-        message: "This video doesn't have captions. Please try a video with CC enabled.",
-      };
+  if (!process.env.GOOGLE_API_KEY) {
+    return {
+      success: false,
+      message: "AI service not configured. Please contact support.",
+    };
+  }
+
+  console.log("=== Processing Video ===");
+  console.log("URL:", url);
+  console.log("Video ID:", videoId);
+
+  try {
+    // Step 1: Fetch metadata (always succeeds with fallback)
+    const metadata = await fetchVideoMetadata(videoId, url);
+
+    // Step 2: Attempt transcript fetch (non-blocking)
+    const transcriptResult = await fetchTranscript(videoId);
+
+    let summary: VideoSummary;
+
+    // Step 3: Generate summary based on available data
+    if (transcriptResult.success && transcriptResult.text) {
+      console.log("Path: TRANSCRIPT-BASED");
+      summary = await generateTranscriptSummary(transcriptResult.text, metadata);
+    } else {
+      console.log("Path: METADATA-INFERRED");
+      console.log(`   Reason: ${transcriptResult.reason}`);
+      summary = await generateMetadataSummary(metadata);
     }
 
-    const summary = await generateAdaptiveSummary({
-      level: "transcript",
-      transcript,
-      title: "Video",
-      url,
-      videoId,
-    });
-
     console.log("✓ Processing complete");
+    console.log(`   Confidence: ${summary.confidence}`);
+    console.log(`   Title: ${summary.title}`);
+
     return {
       success: true,
-      message: "Video analyzed successfully!",
+      message: `Video analyzed successfully! (${
+        summary.confidence === "transcript" ? "Full analysis" : "Inferred from metadata"
+      })`,
       summary,
       analysis: {
         intent: "analyze_url",
@@ -269,26 +389,29 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
       },
     };
   } catch (error) {
-    console.error("✗ Processing error:", error);
-    
-    if (error instanceof DataUnavailabilityError) {
+    console.error("✗ Critical processing error:", error);
+
+    // Handle rate limiting
+    if (
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 429
+    ) {
+      geminiDisabledUntil = Date.now() + 60000;
       return {
         success: false,
-        message: "Video information temporarily unavailable. Please try again.",
+        message: "AI service rate limited. Please try again in a minute.",
       };
     }
-    
-    if (error instanceof SystemFailureError) {
-      return {
-        success: false,
-        message: error.message,
-      };
-    }
-    
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+    // Generic failure
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error occurred";
+
     return {
       success: false,
-      message: `Unable to process video. ${errorMessage}`,
+      message: `Failed to process video: ${errorMessage}`,
     };
   }
 }
@@ -348,7 +471,7 @@ export async function saveContent(
   }
 }
 
-// Get saved content for current user
+// Get saved content
 export async function getSavedContent(): Promise<SavedContent[]> {
   try {
     const supabase = await createClient();
@@ -422,12 +545,13 @@ export async function deleteContent(id: string): Promise<ActionResult> {
   }
 }
 
-// Analyze voice command intent
+// Analyze voice command
 export async function analyzeCommand(
   transcript: string
 ): Promise<ActionResult> {
   const lower = transcript.toLowerCase();
 
+  // Extract URL from command
   const urlMatch = transcript.match(
     /(https?:\/\/[^\s]+)|(youtu\.?be[^\s]+)|(youtube\.com[^\s]+)/i
   );
@@ -440,6 +564,7 @@ export async function analyzeCommand(
     return processYoutubeLink(url);
   }
 
+  // Command intent matching
   if (lower.match(/analyze|summarize|process|check out|look at/)) {
     return {
       success: true,
@@ -452,13 +577,9 @@ export async function analyzeCommand(
   }
 
   if (lower.match(/read.*summary|read it|read.*to me|speak|say.*summary/)) {
-    const audio = await generateSpeech(
-      "Which summary would you like me to read?"
-    );
     return {
       success: true,
       message: "Which summary would you like me to read?",
-      audio,
       analysis: {
         intent: "read_summary",
         response: "Which summary would you like me to read?",
@@ -466,7 +587,18 @@ export async function analyzeCommand(
     };
   }
 
-  if (lower.match(/list|show|my videos|saved|recent/)) {
+  if (lower.match(/save|store|keep/)) {
+    return {
+      success: true,
+      message: "I'll save the current summary to your library.",
+      analysis: {
+        intent: "save",
+        response: "Saving to library.",
+      },
+    };
+  }
+
+  if (lower.match(/list|show|my videos|saved|library|recent/)) {
     return {
       success: true,
       message: "Showing your saved videos.",
@@ -489,14 +621,10 @@ export async function analyzeCommand(
   }
 
   if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
-    const audio = await generateSpeech(
-      "Hello! Paste a YouTube link to analyze, or ask me about your saved videos."
-    );
     return {
       success: true,
       message:
         "Hello! Paste a YouTube link to analyze, or ask me about your saved videos.",
-      audio,
       analysis: {
         intent: "greeting",
         response: "Hello! Ready to help.",
@@ -504,21 +632,11 @@ export async function analyzeCommand(
     };
   }
 
-  if (transcript.length > 10) {
-    return {
-      success: true,
-      message:
-        "Paste a YouTube link to analyze, or ask me about your saved videos.",
-      analysis: {
-        intent: "unclear",
-        response: "Paste a YouTube link or ask a question.",
-      },
-    };
-  }
-
+  // Unclear intent
   return {
     success: true,
-    message: "Paste a YouTube link to analyze, or ask me about your saved videos.",
+    message:
+      "Paste a YouTube link to analyze, or ask me about your saved videos.",
     analysis: {
       intent: "unclear",
       response: "Paste a YouTube link or ask a question.",
@@ -526,7 +644,7 @@ export async function analyzeCommand(
   };
 }
 
-// Generate speech with ElevenLabs
+// Generate speech with ElevenLabs (ONLY on explicit request)
 export async function generateSpeech(
   text: string
 ): Promise<string | undefined> {
@@ -540,6 +658,9 @@ export async function generateSpeech(
   try {
     console.log("Generating speech with ElevenLabs...");
 
+    // Truncate text to avoid quota issues
+    const truncatedText = text.length > 500 ? text.substring(0, 500) + "..." : text;
+
     const response = await fetch(
       "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
       {
@@ -550,7 +671,7 @@ export async function generateSpeech(
           "xi-api-key": apiKey,
         },
         body: JSON.stringify({
-          text,
+          text: truncatedText,
           model_id: "eleven_multilingual_v2",
           voice_settings: {
             stability: 0.5,
@@ -566,7 +687,7 @@ export async function generateSpeech(
       return undefined;
     }
 
-    console.log("ElevenLabs audio generated successfully");
+    console.log("✓ ElevenLabs audio generated");
     const audioBuffer = await response.arrayBuffer();
     const base64Audio = Buffer.from(audioBuffer).toString("base64");
     return `data:audio/mpeg;base64,${base64Audio}`;
@@ -576,15 +697,29 @@ export async function generateSpeech(
   }
 }
 
-// Read summary aloud
+// Read summary aloud (explicit user action only)
 export async function readSummaryAloud(
   summary: VideoSummary
 ): Promise<ActionResult> {
-  const textToRead = `${
+  const confidenceNote =
+    summary.confidence === "inferred"
+      ? "Note: This summary was inferred from video metadata. "
+      : "";
+
+  const textToRead = `${confidenceNote}${
     summary.title
-  }. Key takeaways: ${summary.keyTakeaways.join(". ")}. ${summary.abstract}`;
+  }. Key takeaways: ${summary.keyTakeaways.join(". ")}. Summary: ${
+    summary.abstract
+  }`;
 
   const audio = await generateSpeech(textToRead);
+
+  if (!audio) {
+    return {
+      success: false,
+      message: "Text-to-speech is not available at the moment.",
+    };
+  }
 
   return {
     success: true,

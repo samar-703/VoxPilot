@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
   processYoutubeLink,
-  analyzeCommand,
+  parseVoiceIntent,
   saveContent,
   getSavedContent,
   deleteContent,
@@ -14,6 +14,7 @@ import {
   getUser,
   type VideoSummary,
   type SavedContent,
+  type Intent,
 } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,7 +54,7 @@ import { ModeToggle } from "@/components/mode-toggle";
 import { cn } from "@/lib/utils";
 
 // Voice Orb State
-type OrbState = "idle" | "listening" | "processing" | "speaking";
+type OrbState = "idle" | "listening" | "processing" | "speaking" | "confirming";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -77,6 +78,12 @@ export default function DashboardPage() {
   // Voice state
   const [orbState, setOrbState] = useState<OrbState>("idle");
   const [transcript, setTranscript] = useState("");
+
+  // Confirmation state for voice (delete confirmation)
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState<{
+    type: "delete";
+    video: SavedContent;
+  } | null>(null);
 
   // UI state
   const [statusMessage, setStatusMessage] = useState("");
@@ -128,142 +135,6 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Handle URL or voice input
-  const handleAnalyze = useCallback(
-    async (input: string) => {
-      if (!input.trim()) return;
-
-      setIsAnalyzing(true);
-      setOrbState("processing");
-      showStatus("Analyzing...");
-
-      try {
-        // Check if it's a YouTube URL
-        const isUrl = input.match(/(youtube\.com|youtu\.be)/i);
-
-        if (isUrl) {
-          const result = await processYoutubeLink(input);
-
-          if (result.success && result.summary) {
-            const videoId = input.match(
-              /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/
-            )?.[1];
-
-            setCurrentVideo({
-              url: input,
-              videoId: videoId || "",
-              summary: result.summary,
-            });
-            showStatus("Video analyzed successfully!");
-          } else {
-            showStatus(result.message);
-          }
-        } else {
-          // Treat as voice command or question
-          const result = await analyzeCommand(input);
-
-          if (result.success) {
-            showStatus(result.message);
-
-            if (result.audio) {
-              playAudio(result.audio);
-            }
-
-            // Handle specific intents
-            if (result.analysis?.intent === "list") {
-              const saved = await getSavedContent();
-              setSavedVideos(saved);
-            }
-          } else {
-            showStatus(result.message);
-          }
-        }
-      } catch (error) {
-        console.error("Analysis error:", error);
-        showStatus("An error occurred. Please try again.");
-      } finally {
-        setIsAnalyzing(false);
-        setOrbState("idle");
-        setInputValue("");
-      }
-    },
-    [showStatus, playAudio]
-  );
-
-  // Save current video
-  const handleSave = useCallback(async () => {
-    if (!currentVideo) return;
-
-    setIsAnalyzing(true);
-    showStatus("Saving...");
-
-    try {
-      const result = await saveContent(
-        currentVideo.url,
-        currentVideo.videoId,
-        currentVideo.summary
-      );
-
-      if (result.success) {
-        showStatus("Video saved to your library!");
-        const saved = await getSavedContent();
-        setSavedVideos(saved);
-      } else {
-        showStatus(result.message);
-      }
-    } catch (error) {
-      console.error("Save error:", error);
-      showStatus("Failed to save video.");
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [currentVideo, showStatus]);
-
-  // Delete video
-  const handleDelete = useCallback(async () => {
-    if (!videoToDelete) return;
-
-    try {
-      const result = await deleteContent(videoToDelete.id);
-
-      if (result.success) {
-        setSavedVideos((prev) => prev.filter((v) => v.id !== videoToDelete.id));
-        showStatus("Video deleted.");
-      } else {
-        showStatus(result.message);
-      }
-    } catch (error) {
-      console.error("Delete error:", error);
-      showStatus("Failed to delete video.");
-    } finally {
-      setDeleteDialogOpen(false);
-      setVideoToDelete(null);
-    }
-  }, [videoToDelete, showStatus]);
-
-  // Read summary aloud
-  const handleReadSummary = useCallback(
-    async (summary: VideoSummary) => {
-      setOrbState("processing");
-      showStatus("Generating audio...");
-
-      try {
-        const result = await readSummaryAloud(summary);
-
-        if (result.audio) {
-          playAudio(result.audio);
-          showStatus("Reading summary...");
-        } else {
-          showStatus("Audio generation failed. Check ElevenLabs API key.");
-        }
-      } catch (error) {
-        console.error("Read aloud error:", error);
-        showStatus("Failed to read summary.");
-      }
-    },
-    [showStatus, playAudio]
-  );
-
   // Load saved video into view
   const handleLoadSaved = useCallback((saved: SavedContent) => {
     setCurrentVideo({
@@ -273,7 +144,275 @@ export default function DashboardPage() {
     });
   }, []);
 
-  // Voice recognition
+  // ============================================
+  // UNIFIED ACTION HANDLER - Voice & UI parity
+  // ============================================
+  const executeAction = useCallback(
+    async (
+      intent: Intent,
+      context?: { url?: string; video?: SavedContent }
+    ) => {
+      console.log("Executing intent:", intent, context);
+
+      switch (intent) {
+        case "ANALYZE_VIDEO": {
+          if (!context?.url) {
+            showStatus("No URL provided");
+            return;
+          }
+          setIsAnalyzing(true);
+          setOrbState("processing");
+          showStatus("Analyzing...");
+
+          try {
+            const result = await processYoutubeLink(context.url);
+            if (result.success && result.summary) {
+              const videoId = context.url.match(
+                /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/
+              )?.[1];
+              setCurrentVideo({
+                url: context.url,
+                videoId: videoId || "",
+                summary: result.summary,
+              });
+              showStatus("Video analyzed!");
+            } else {
+              showStatus(result.message);
+            }
+          } catch (error) {
+            console.error("Analysis error:", error);
+            showStatus("Failed to analyze video");
+          } finally {
+            setIsAnalyzing(false);
+            setOrbState("idle");
+            setInputValue("");
+          }
+          break;
+        }
+
+        case "READ_SUMMARY": {
+          // ElevenLabs TTS - ONLY called here on explicit user request
+          const summary = currentVideo?.summary;
+          if (!summary) {
+            showStatus("No summary loaded");
+            setOrbState("idle");
+            return;
+          }
+          setOrbState("processing");
+          showStatus("Reading...");
+
+          try {
+            const result = await readSummaryAloud(summary);
+            if (result.audio) {
+              playAudio(result.audio);
+            } else {
+              showStatus("TTS unavailable");
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("TTS error:", error);
+            showStatus("Failed to read summary");
+            setOrbState("idle");
+          }
+          break;
+        }
+
+        case "SAVE_VIDEO": {
+          if (!currentVideo) {
+            showStatus("No video to save");
+            return;
+          }
+          setIsAnalyzing(true);
+          showStatus("Saving...");
+
+          try {
+            const result = await saveContent(
+              currentVideo.url,
+              currentVideo.videoId,
+              currentVideo.summary
+            );
+            if (result.success) {
+              showStatus("Saved!");
+              const saved = await getSavedContent();
+              setSavedVideos(saved);
+            } else {
+              showStatus(result.message);
+            }
+          } catch (error) {
+            console.error("Save error:", error);
+            showStatus("Failed to save");
+          } finally {
+            setIsAnalyzing(false);
+          }
+          break;
+        }
+
+        case "DELETE_VIDEO": {
+          // For voice: set awaiting confirmation
+          // For UI: the button already sets videoToDelete and opens dialog
+          if (context?.video) {
+            setAwaitingConfirmation({ type: "delete", video: context.video });
+            setOrbState("confirming");
+            showStatus("Are you sure? Say yes or no.");
+          } else if (currentVideo) {
+            // Delete current video if no specific one provided
+            const found = savedVideos.find(
+              (v) => v.video_id === currentVideo.videoId
+            );
+            if (found) {
+              setAwaitingConfirmation({ type: "delete", video: found });
+              setOrbState("confirming");
+              showStatus("Delete this video? Say yes or no.");
+            } else {
+              showStatus("Video not in library");
+            }
+          } else {
+            showStatus("No video selected");
+          }
+          break;
+        }
+
+        case "CONFIRM_YES": {
+          if (awaitingConfirmation?.type === "delete") {
+            const video = awaitingConfirmation.video;
+            setAwaitingConfirmation(null);
+            setOrbState("processing");
+            showStatus("Deleting...");
+
+            try {
+              const result = await deleteContent(video.id);
+              if (result.success) {
+                setSavedVideos((prev) => prev.filter((v) => v.id !== video.id));
+                showStatus("Deleted!");
+              } else {
+                showStatus(result.message);
+              }
+            } catch (error) {
+              console.error("Delete error:", error);
+              showStatus("Failed to delete");
+            } finally {
+              setOrbState("idle");
+            }
+          }
+          break;
+        }
+
+        case "CANCEL_DELETE": {
+          setAwaitingConfirmation(null);
+          setOrbState("idle");
+          showStatus("Cancelled");
+          break;
+        }
+
+        case "LIST_VIDEOS": {
+          showStatus("Loading library...");
+          try {
+            const saved = await getSavedContent();
+            setSavedVideos(saved);
+            showStatus(`${saved.length} videos in library`);
+          } catch (error) {
+            console.error("List error:", error);
+            showStatus("Failed to load library");
+          }
+          break;
+        }
+
+        case "PLAY_VIDEO": {
+          if (currentVideo) {
+            window.open(currentVideo.url, "_blank");
+            showStatus("Opening video");
+          } else {
+            showStatus("No video loaded");
+          }
+          break;
+        }
+
+        case "GREETING": {
+          showStatus("Ready! Say a command or paste a link.");
+          break;
+        }
+
+        case "UNCLEAR":
+        default: {
+          showStatus("Say: read summary, save, delete, or paste a link");
+          break;
+        }
+      }
+    },
+    [currentVideo, savedVideos, awaitingConfirmation, showStatus, playAudio]
+  );
+
+  // Handle URL submission (from input field)
+  const handleAnalyze = useCallback(
+    async (input: string) => {
+      if (!input.trim()) return;
+
+      // Check if it's a YouTube URL
+      const isUrl = input.match(/(youtube\.com|youtu\.be)/i);
+      if (isUrl) {
+        await executeAction("ANALYZE_VIDEO", { url: input });
+      } else {
+        showStatus("Please paste a valid YouTube URL");
+      }
+    },
+    [executeAction, showStatus]
+  );
+
+  // Save current video (for button click)
+  const handleSave = useCallback(async () => {
+    await executeAction("SAVE_VIDEO");
+  }, [executeAction]);
+
+  // Delete video (for button click - opens dialog)
+  const handleDelete = useCallback(async () => {
+    if (!videoToDelete) return;
+
+    setDeleteDialogOpen(false);
+    setOrbState("processing");
+
+    try {
+      const result = await deleteContent(videoToDelete.id);
+      if (result.success) {
+        setSavedVideos((prev) => prev.filter((v) => v.id !== videoToDelete.id));
+        showStatus("Deleted!");
+      } else {
+        showStatus(result.message);
+      }
+    } catch (error) {
+      console.error("Delete error:", error);
+      showStatus("Failed to delete");
+    } finally {
+      setVideoToDelete(null);
+      setOrbState("idle");
+    }
+  }, [videoToDelete, showStatus]);
+
+  // Read summary aloud (for button click - reads specific summary)
+  const handleReadSummary = useCallback(
+    async (summary: VideoSummary) => {
+      setOrbState("processing");
+      showStatus("Reading...");
+
+      try {
+        const result = await readSummaryAloud(summary);
+        if (result.audio) {
+          playAudio(result.audio);
+        } else {
+          showStatus("TTS unavailable");
+          setOrbState("idle");
+        }
+      } catch (error) {
+        console.error("TTS error:", error);
+        showStatus("Failed to read summary");
+        setOrbState("idle");
+      }
+    },
+    [showStatus, playAudio]
+  );
+
+  // ============================================
+  // VOICE RECOGNITION with parseVoiceIntent
+  // ============================================
   const startListening = useCallback(() => {
     if (typeof window === "undefined") return;
 
@@ -284,7 +423,7 @@ export default function DashboardPage() {
       (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      showStatus("Speech recognition not supported in this browser.");
+      showStatus("Speech recognition not supported");
       return;
     }
 
@@ -298,47 +437,69 @@ export default function DashboardPage() {
     recognition.lang = "en-US";
 
     recognition.onstart = () => {
-      setOrbState("listening");
+      if (awaitingConfirmation) {
+        setOrbState("confirming");
+      } else {
+        setOrbState("listening");
+      }
       setTranscript("");
     };
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const result = event.results[event.results.length - 1];
-      const text = result[0].transcript;
+    recognition.onresult = async (event: SpeechRecognitionEvent) => {
+      const resultItem = event.results[event.results.length - 1];
+      const text = resultItem[0].transcript;
       setTranscript(text);
 
-      if (result.isFinal) {
-        handleAnalyze(text);
+      if (resultItem.isFinal) {
+        console.log("Voice input (final):", text);
+        setOrbState("processing");
+
+        // Parse intent using server action (Gemini can be used here for complex cases)
+        const analysis = await parseVoiceIntent(
+          text,
+          currentVideo?.summary,
+          awaitingConfirmation ? { type: awaitingConfirmation.type } : null
+        );
+
+        console.log("Parsed intent:", analysis);
+
+        // Execute the action through unified handler
+        await executeAction(analysis.intent, {
+          url: analysis.url,
+          video: awaitingConfirmation?.video,
+        });
+
+        setTranscript("");
       }
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.error("Speech recognition error:", event.error);
-      setOrbState("idle");
       if (event.error !== "aborted") {
-        showStatus("Voice recognition error. Please try again.");
+        showStatus("Voice error. Try again.");
       }
+      setOrbState(awaitingConfirmation ? "confirming" : "idle");
     };
 
     recognition.onend = () => {
       if (orbState === "listening") {
-        setOrbState("idle");
+        setOrbState(awaitingConfirmation ? "confirming" : "idle");
       }
     };
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [handleAnalyze, showStatus, orbState]);
+  }, [showStatus, orbState, currentVideo, awaitingConfirmation, executeAction]);
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
     }
-    setOrbState("idle");
-  }, []);
+    setOrbState(awaitingConfirmation ? "confirming" : "idle");
+  }, [awaitingConfirmation]);
 
   const toggleListening = useCallback(() => {
-    if (orbState === "listening") {
+    if (orbState === "listening" || orbState === "confirming") {
       stopListening();
     } else if (orbState === "idle") {
       startListening();
@@ -351,27 +512,38 @@ export default function DashboardPage() {
       // Spacebar: toggle voice listening (only when not focused on input)
       if (e.code === "Space" && document.activeElement === document.body) {
         e.preventDefault();
-        if (orbState === "idle") {
+        if (orbState === "idle" || orbState === "confirming") {
           startListening();
         } else if (orbState === "listening") {
           stopListening();
         }
       }
-      
-      // ESC: stop audio or listening
+
+      // ESC: stop audio, listening, or cancel confirmation
       if (e.code === "Escape") {
         e.preventDefault();
         if (orbState === "listening") {
           stopListening();
         } else if (orbState === "speaking") {
           stopAudio();
+        } else if (awaitingConfirmation) {
+          setAwaitingConfirmation(null);
+          setOrbState("idle");
+          showStatus("Cancelled");
         }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [orbState, startListening, stopListening, stopAudio]);
+  }, [
+    orbState,
+    awaitingConfirmation,
+    startListening,
+    stopListening,
+    stopAudio,
+    showStatus,
+  ]);
 
   // Sign out
   const handleSignOut = useCallback(async () => {
@@ -536,8 +708,16 @@ export default function DashboardPage() {
                             <CardTitle className="text-xl">
                               {currentVideo.summary.title}
                             </CardTitle>
-                            <Badge variant={currentVideo.summary.confidence === "transcript" ? "default" : "secondary"}>
-                              {currentVideo.summary.confidence === "transcript" ? "📝 Full Analysis" : "🔍 Inferred"}
+                            <Badge
+                              variant={
+                                currentVideo.summary.confidence === "transcript"
+                                  ? "default"
+                                  : "secondary"
+                              }
+                            >
+                              {currentVideo.summary.confidence === "transcript"
+                                ? "📝 Full Analysis"
+                                : "🔍 Inferred"}
                             </Badge>
                           </div>
                           <CardDescription className="mt-0">
@@ -782,6 +962,36 @@ export default function DashboardPage() {
             </>
           )}
 
+          {/* Confirming rings (red for delete) */}
+          {orbState === "confirming" && (
+            <>
+              <motion.div
+                className="absolute inset-[-20px] rounded-full bg-red-500/20"
+                animate={{
+                  scale: [1, 1.3, 1],
+                  opacity: [0.5, 0.8, 0.5],
+                }}
+                transition={{
+                  duration: 1,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                }}
+              />
+              <motion.div
+                className="absolute inset-[-10px] rounded-full border-2 border-red-500/50"
+                animate={{
+                  scale: [1, 1.15, 1],
+                  opacity: [0.4, 0.7, 0.4],
+                }}
+                transition={{
+                  duration: 0.8,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                }}
+              />
+            </>
+          )}
+
           {/* Processing spinner */}
           {orbState === "processing" && (
             <motion.div
@@ -817,12 +1027,13 @@ export default function DashboardPage() {
             className={cn(
               "w-14 h-14 rounded-full transition-all duration-300",
               orbState === "listening" && "bg-primary hover:bg-primary",
+              orbState === "confirming" && "bg-red-500 hover:bg-red-600",
               orbState === "speaking" && "bg-green-500 hover:bg-green-600"
             )}
             onClick={orbState === "speaking" ? stopAudio : toggleListening}
             disabled={orbState === "processing"}
           >
-            {orbState === "listening" ? (
+            {orbState === "listening" || orbState === "confirming" ? (
               <IconMicrophoneOff size={24} />
             ) : orbState === "processing" ? (
               <IconLoader size={24} className="animate-spin" />
@@ -841,11 +1052,17 @@ export default function DashboardPage() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
-              className="absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 rounded-full bg-black/80 dark:bg-white/10 text-white text-xs backdrop-blur-sm"
+              className={cn(
+                "absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 rounded-full text-white text-xs backdrop-blur-sm",
+                orbState === "confirming"
+                  ? "bg-red-500/90"
+                  : "bg-black/80 dark:bg-white/10"
+              )}
             >
-              {orbState === "listening" && "Listening... (Press Space to stop)"}
+              {orbState === "listening" && "Listening... (Space to stop)"}
+              {orbState === "confirming" && "Say YES or NO"}
               {orbState === "processing" && "Processing..."}
-              {orbState === "speaking" && "Speaking... (Press ESC to stop)"}
+              {orbState === "speaking" && "Speaking... (ESC to stop)"}
             </motion.div>
           )}
         </AnimatePresence>

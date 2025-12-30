@@ -1,7 +1,7 @@
 "use server";
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { getSubtitles } from "youtube-caption-scraper";
+import { YoutubeTranscript } from "youtube-transcript";
 import { createClient } from "@/lib/supabase/server";
 
 // Initialize Gemini
@@ -54,21 +54,16 @@ export interface ActionResult {
   savedContent?: SavedContent;
 }
 
-// Data availability levels for graceful degradation
-type DataLevel = "transcript" | "metadata" | "basic";
+type DataLevel = "transcript" | "basic";
 
 interface VideoData {
   level: DataLevel;
   transcript?: string;
   title: string;
-  description?: string;
-  channel?: string;
-  tags?: string[];
   url: string;
   videoId: string;
 }
 
-// Error classification for better UX
 class DataUnavailabilityError extends Error {
   constructor(message: string) {
     super(message);
@@ -83,52 +78,18 @@ class SystemFailureError extends Error {
   }
 }
 
-// Utility: Execute with timeout
 async function withTimeout<T>(
   promise: Promise<T>,
-  timeoutMs: number,
-  operation: string
+  timeoutMs: number
 ): Promise<T> {
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error(`${operation} timed out`)), timeoutMs);
+    setTimeout(() => reject(new Error("timeout")), timeoutMs);
   });
   
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("timed out")) {
-      throw new DataUnavailabilityError(`${operation} unavailable`);
-    }
-    throw error;
-  }
+  return Promise.race([promise, timeoutPromise]);
 }
 
-// Utility: Retry with exponential backoff
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries: number = 2,
-  operation: string = "operation"
-): Promise<T> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      const isLastAttempt = attempt === maxRetries - 1;
-      
-      if (isLastAttempt) {
-        throw error;
-      }
-      
-      const delay = Math.pow(2, attempt) * 1000;
-      console.log(`${operation} failed, retrying in ${delay}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-  
-  throw new Error(`${operation} failed after ${maxRetries} retries`);
-}
-
-// Extract YouTube Video ID from URL
+// Extract YouTube Video ID
 function extractVideoId(url: string): string | null {
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/,
@@ -147,120 +108,31 @@ function getThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
-// Layer 1: Fetch transcript using youtube-caption-scraper
+// Simple, robust transcript fetching
 async function fetchTranscriptData(videoId: string): Promise<string | null> {
-  console.log("Layer 1: Fetching transcript with youtube-caption-scraper for:", videoId);
+  console.log("Fetching transcript for:", videoId);
   
   try {
-    const subtitles = await getSubtitles({ videoID: videoId, lang: 'en' });
+    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
     
-    if (subtitles && subtitles.length > 0) {
-      const transcript = subtitles
-        .map((sub) => sub.text)
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim();
-      
-      console.log(`✓ Transcript found: ${transcript.length} chars`);
-      console.log(`✓ Subtitles count: ${subtitles.length}`);
-      console.log(`Transcript preview: ${transcript.substring(0, 200)}...`);
-      
-      return transcript;
+    if (transcript && transcript.length > 0) {
+      const text = transcript.map((item) => item.text).join(" ").trim();
+      console.log(`✓ Transcript found: ${text.length} chars`);
+      console.log(`Preview: ${text.substring(0, 150)}...`);
+      return text;
     }
   } catch (error) {
-    console.log("✗ Transcript fetch failed:", error instanceof Error ? error.message : "unknown");
+    console.log("✗ Failed:", error instanceof Error ? error.message : "unknown");
   }
   
-  console.log("✗ No transcript available");
   return null;
 }
 
-// Layer 2: Fetch video metadata as fallback (direct YouTube API)
-async function fetchVideoMetadata(videoId: string, url: string): Promise<Omit<VideoData, 'transcript' | 'level'>> {
-  console.log("Layer 2: Fetching video metadata as fallback");
-  
-  try {
-    // Try to get basic video info via transcript endpoint (it returns video data)
-    const subtitles = await getSubtitles({ videoID: videoId });
-    
-    if (subtitles && subtitles.length > 0) {
-      // Extract any metadata from the response if available
-      return {
-        title: "YouTube Video",
-        description: "",
-        channel: "",
-        tags: [],
-        url,
-        videoId,
-      };
-    }
-  } catch (error) {
-    console.log("✗ Metadata extraction failed:", error instanceof Error ? error.message : "unknown");
-  }
-  
-  console.log("✗ Using basic data");
-  return {
-    title: "YouTube Video",
-    description: "",
-    channel: "",
-    tags: [],
-    url,
-    videoId,
-  };
-}
-
-// Main data fetching with layered fallback
-async function fetchVideoData(url: string): Promise<VideoData> {
-  const videoId = extractVideoId(url);
-  
-  if (!videoId) {
-    throw new Error("Invalid YouTube URL");
-  }
-  
-  console.log("=== Starting layered data fetch ===");
-  
-  // Layer 1: Try transcript
-  const transcript = await withRetry(
-    () => fetchTranscriptData(videoId),
-    2,
-    "Transcript fetch"
-  );
-  
-  if (transcript && transcript.length > 20) {
-    return {
-      level: "transcript",
-      transcript,
-      title: "Video",
-      url,
-      videoId,
-    };
-  }
-  
-  console.log("⚠ Transcript unavailable, degrading to metadata");
-  
-  // Layer 2: Fallback to metadata
-  const metadata = await withRetry(
-    () => fetchVideoMetadata(videoId, url),
-    1,
-    "Metadata fetch"
-  );
-  
-  return {
-    level: metadata.channel ? "metadata" : "basic",
-    title: metadata.title,
-    description: metadata.description,
-    channel: metadata.channel,
-    tags: metadata.tags,
-    url,
-    videoId,
-  };
-}
-
-// Generate summary with adaptive prompt based on data level
+// Generate summary from transcript
 async function generateAdaptiveSummary(data: VideoData): Promise<VideoSummary> {
   const now = Date.now();
   if (now < geminiDisabledUntil) {
-    throw new SystemFailureError("AI service temporarily unavailable due to rate limiting");
+    throw new SystemFailureError("AI service temporarily unavailable");
   }
 
   if (!process.env.GOOGLE_API_KEY) {
@@ -276,38 +148,24 @@ async function generateAdaptiveSummary(data: VideoData): Promise<VideoSummary> {
     
     if (data.level === "transcript") {
       confidence = "high";
-      // Use first 6000 chars for key insights - saves tokens, captures main content
       const truncated = data.transcript!.length > 6000
         ? data.transcript!.substring(0, 6000) + "..."
         : data.transcript!;
       
       prompt = `Extract key insights from this video transcript.
 
-Create a focused summary with:
+Create a focused summary:
 1. Title (max 10 words) - what video is about
-2. Exactly 3 Key Takeaways (each max 15 words) - main points learned
+2. Exactly 3 Key Takeaways (each max 15 words) - main points
 3. Abstract (max 50 words) - concise overview
 
-Be specific and actionable. Avoid generic phrases.
+Be specific. Avoid generic phrases.
 
 Transcript:
 ${truncated}`;
-    } else if (data.level === "metadata") {
-      confidence = "medium";
-      prompt = `Create summary from video metadata:
-
-Title: ${data.title}
-Description: ${data.description || "N/A"}
-
-Generate:
-1. Title (max 10 words)
-2. Exactly 3 Key Takeaways (each max 15 words)
-3. Abstract (max 50 words)`;
-
     } else {
       confidence = "low";
-      prompt = `Create generic template:
-
+      prompt = `Create generic summary:
 1. Title: "Video Summary"
 2. Exactly 3 Generic Takeaways
 3. Abstract (max 30 words): "Captions unavailable."`;
@@ -318,7 +176,7 @@ Generate:
         {
           text: `${prompt}
 
-Return ONLY valid JSON:
+Return ONLY JSON:
 {
   "title": "...",
   "keyTakeaways": ["...", "...", "..."],
@@ -326,8 +184,7 @@ Return ONLY valid JSON:
 }`
         }
       ]),
-      20000,
-      "AI generation"
+      20000
     );
 
     const text = result.response.text();
@@ -335,7 +192,6 @@ Return ONLY valid JSON:
 
     if (!jsonMatch) {
       console.error("Failed to parse AI response");
-      console.error("Raw response:", text.substring(0, 300));
       throw new SystemFailureError("AI response parsing failed");
     }
 
@@ -355,7 +211,6 @@ Return ONLY valid JSON:
       "status" in error &&
       error.status === 429
     ) {
-      console.log("AI quota exceeded, cooling down");
       geminiDisabledUntil = Date.now() + 60000;
     }
     
@@ -367,7 +222,7 @@ Return ONLY valid JSON:
   }
 }
 
-// Process YouTube link with graceful degradation
+// Main video processing
 export async function processYoutubeLink(url: string): Promise<ActionResult> {
   const videoId = extractVideoId(url);
 
@@ -383,26 +238,28 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
     console.log("URL:", url);
     console.log("ID:", videoId);
     
-    // Fetch data with layered fallback
-    const data = await fetchVideoData(url);
-    
-    // Generate summary with adaptive prompt
-    const summary = await generateAdaptiveSummary(data);
-    
-    // Provide user-friendly context message
-    let contextMessage = "";
-    if (summary.confidence === "high") {
-      contextMessage = "Full transcript analysis complete.";
-    } else if (summary.confidence === "medium") {
-      contextMessage = "Summary based on video metadata (captions unavailable).";
-    } else {
-      contextMessage = "Limited summary (video information unavailable).";
+    const transcript = await fetchTranscriptData(videoId);
+
+    if (!transcript || transcript.length < 20) {
+      console.warn("Transcript unavailable or too short");
+      return {
+        success: false,
+        message: "This video doesn't have captions. Please try a video with CC enabled.",
+      };
     }
-    
+
+    const summary = await generateAdaptiveSummary({
+      level: "transcript",
+      transcript,
+      title: "Video",
+      url,
+      videoId,
+    });
+
     console.log("✓ Processing complete");
     return {
       success: true,
-      message: contextMessage,
+      message: "Video analyzed successfully!",
       summary,
       analysis: {
         intent: "analyze_url",
@@ -417,7 +274,7 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
     if (error instanceof DataUnavailabilityError) {
       return {
         success: false,
-        message: "Video information temporarily unavailable. Please try again or use a different video.",
+        message: "Video information temporarily unavailable. Please try again.",
       };
     }
     
@@ -565,92 +422,17 @@ export async function deleteContent(id: string): Promise<ActionResult> {
   }
 }
 
-// Answer questions about saved content
-export async function askQuestion(
-  question: string,
-  videoId?: string
-): Promise<ActionResult> {
-  try {
-    const supabase = await createClient();
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return {
-        success: false,
-        message: "You must be logged in to ask questions.",
-      };
-    }
-
-    // Fetch relevant content
-    let query = supabase
-      .from("saved_content")
-      .select("*")
-      .eq("user_id", user.id);
-
-    if (videoId) {
-      query = query.eq("video_id", videoId);
-    }
-
-    const { data: contents } = await query.limit(5);
-
-    if (!contents || contents.length === 0) {
-      return {
-        success: false,
-        message: "No saved content found to answer your question.",
-      };
-    }
-
-    // Use Gemini to answer the question
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    const context = contents
-      .map(
-        (c) => `Title: ${c.title}\nSummary: ${JSON.stringify(c.summary_json)}`
-      )
-      .join("\n\n");
-
-    const result = await model.generateContent([
-      `You are a helpful assistant answering questions about saved YouTube videos. Keep answers concise (max 100 words).`,
-      `Context from saved videos:\n${context}`,
-      `Question: ${question}`,
-    ]);
-
-    const answer = result.response.text();
-
-    return {
-      success: true,
-      message: answer,
-      analysis: {
-        intent: "question",
-        question,
-        response: answer,
-      },
-    };
-  } catch (error) {
-    console.error("Ask question error:", error);
-    return {
-      success: false,
-      message: "Failed to answer question.",
-    };
-  }
-}
-
 // Analyze voice command intent
 export async function analyzeCommand(
   transcript: string
 ): Promise<ActionResult> {
   const lower = transcript.toLowerCase();
 
-  // Check for URL in transcript
   const urlMatch = transcript.match(
     /(https?:\/\/[^\s]+)|(youtu\.?be[^\s]+)|(youtube\.com[^\s]+)/i
   );
 
   if (urlMatch) {
-    // Extract and process the URL
     let url = urlMatch[0];
     if (!url.startsWith("http")) {
       url = "https://" + url;
@@ -658,7 +440,6 @@ export async function analyzeCommand(
     return processYoutubeLink(url);
   }
 
-  // Check for "analyze" or "summarize" intent with video reference
   if (lower.match(/analyze|summarize|process|check out|look at/)) {
     return {
       success: true,
@@ -670,7 +451,6 @@ export async function analyzeCommand(
     };
   }
 
-  // Check for "read summary" intent - this triggers TTS
   if (lower.match(/read.*summary|read it|read.*to me|speak|say.*summary/)) {
     const audio = await generateSpeech(
       "Which summary would you like me to read?"
@@ -686,7 +466,6 @@ export async function analyzeCommand(
     };
   }
 
-  // Check for list/show saved content
   if (lower.match(/list|show|my videos|saved|recent/)) {
     return {
       success: true,
@@ -698,7 +477,6 @@ export async function analyzeCommand(
     };
   }
 
-  // Check for delete intent
   if (lower.match(/delete|remove|clear/)) {
     return {
       success: true,
@@ -710,10 +488,9 @@ export async function analyzeCommand(
     };
   }
 
-  // Check for greetings
   if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
     const audio = await generateSpeech(
-      "Hello! Paste a YouTube link or ask me anything."
+      "Hello! Paste a YouTube link to analyze, or ask me about your saved videos."
     );
     return {
       success: true,
@@ -727,15 +504,21 @@ export async function analyzeCommand(
     };
   }
 
-  // Default: treat as a question about saved content
   if (transcript.length > 10) {
-    return askQuestion(transcript);
+    return {
+      success: true,
+      message:
+        "Paste a YouTube link to analyze, or ask me about your saved videos.",
+      analysis: {
+        intent: "unclear",
+        response: "Paste a YouTube link or ask a question.",
+      },
+    };
   }
 
   return {
     success: true,
-    message:
-      "Paste a YouTube link to analyze, or ask me about your saved videos.",
+    message: "Paste a YouTube link to analyze, or ask me about your saved videos.",
     analysis: {
       intent: "unclear",
       response: "Paste a YouTube link or ask a question.",
@@ -743,19 +526,19 @@ export async function analyzeCommand(
   };
 }
 
-// Generate speech with ElevenLabs (ONLY when explicitly requested)
+// Generate speech with ElevenLabs
 export async function generateSpeech(
   text: string
 ): Promise<string | undefined> {
   const apiKey = process.env.ELEVEN_LABS_API_KEY;
 
   if (!apiKey) {
-    console.warn("⚠️ ElevenLabs API key not configured");
+    console.warn("ElevenLabs API key not configured");
     return undefined;
   }
 
   try {
-    console.log("🔊 Generating speech with ElevenLabs...");
+    console.log("Generating speech with ElevenLabs...");
 
     const response = await fetch(
       "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
@@ -783,7 +566,7 @@ export async function generateSpeech(
       return undefined;
     }
 
-    console.log("✅ ElevenLabs audio generated successfully");
+    console.log("ElevenLabs audio generated successfully");
     const audioBuffer = await response.arrayBuffer();
     const base64Audio = Buffer.from(audioBuffer).toString("base64");
     return `data:audio/mpeg;base64,${base64Audio}`;
@@ -793,7 +576,7 @@ export async function generateSpeech(
   }
 }
 
-// Read summary aloud (explicit user request only)
+// Read summary aloud
 export async function readSummaryAloud(
   summary: VideoSummary
 ): Promise<ActionResult> {

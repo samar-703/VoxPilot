@@ -400,7 +400,7 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
       analysis: {
         intent: "ANALYZE_VIDEO",
         url,
-        videoId: extractVideoId(url),
+        videoId,
         response: "Please provide a YouTube URL to analyze.",
       },
     };
@@ -758,6 +758,11 @@ export async function generateSpeech(
     console.error("ElevenLabs TTS error:", error);
     return undefined;
   }
+}
+
+// Generate short voice response for common interactions (keeps API usage minimal)
+export async function speakResponse(text: string): Promise<string | undefined> {
+  return await generateSpeech(text);
 }
 
 // Read summary aloud (explicit user action only)

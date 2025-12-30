@@ -28,20 +28,25 @@ export interface SavedContent {
   created_at: string;
 }
 
+export type Intent =
+  | "ANALYZE_VIDEO"
+  | "READ_SUMMARY"
+  | "SAVE_VIDEO"
+  | "DELETE_VIDEO"
+  | "LIST_VIDEOS"
+  | "PLAY_VIDEO"
+  | "GREETING"
+  | "UNCLEAR"
+  | "CONFIRM_YES"
+  | "CANCEL_DELETE";
+
 export interface CommandAnalysis {
-  intent:
-    | "analyze_url"
-    | "question"
-    | "read_summary"
-    | "save"
-    | "list"
-    | "delete"
-    | "greeting"
-    | "unclear";
+  intent: Intent;
   url?: string;
   videoId?: string;
   question?: string;
   response: string;
+  requiresConfirmation?: boolean;
 }
 
 export interface ActionResult {
@@ -114,7 +119,10 @@ async function fetchTranscript(videoId: string): Promise<TranscriptResult> {
       };
     }
 
-    const text = transcript.map((item) => item.text).join(" ").trim();
+    const text = transcript
+      .map((item) => item.text)
+      .join(" ")
+      .trim();
 
     if (text.length < 50) {
       console.log(`Transcript too short: ${text.length} chars`);
@@ -194,7 +202,9 @@ async function generateTranscriptSummary(
   console.log("Generating transcript-based summary...");
 
   const truncated =
-    transcript.length > 6000 ? transcript.substring(0, 6000) + "..." : transcript;
+    transcript.length > 6000
+      ? transcript.substring(0, 6000) + "..."
+      : transcript;
 
   const prompt = `Analyze this YouTube video transcript and extract key insights.
 
@@ -337,7 +347,8 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
   if (now < geminiDisabledUntil) {
     return {
       success: false,
-      message: "AI service temporarily unavailable. Please try again in a moment.",
+      message:
+        "AI service temporarily unavailable. Please try again in a moment.",
     };
   }
 
@@ -364,7 +375,10 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
     // Step 3: Generate summary based on available data
     if (transcriptResult.success && transcriptResult.text) {
       console.log("Path: TRANSCRIPT-BASED");
-      summary = await generateTranscriptSummary(transcriptResult.text, metadata);
+      summary = await generateTranscriptSummary(
+        transcriptResult.text,
+        metadata
+      );
     } else {
       console.log("Path: METADATA-INFERRED");
       console.log(`   Reason: ${transcriptResult.reason}`);
@@ -378,14 +392,16 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
     return {
       success: true,
       message: `Video analyzed successfully! (${
-        summary.confidence === "transcript" ? "Full analysis" : "Inferred from metadata"
+        summary.confidence === "transcript"
+          ? "Full analysis"
+          : "Inferred from metadata"
       })`,
       summary,
       analysis: {
-        intent: "analyze_url",
+        intent: "ANALYZE_VIDEO",
         url,
-        videoId,
-        response: `Analyzed: ${summary.title}`,
+        videoId: extractVideoId(url),
+        response: "Please provide a YouTube URL to analyze.",
       },
     };
   } catch (error) {
@@ -545,13 +561,32 @@ export async function deleteContent(id: string): Promise<ActionResult> {
   }
 }
 
-// Analyze voice command
-export async function analyzeCommand(
-  transcript: string
-): Promise<ActionResult> {
-  const lower = transcript.toLowerCase();
+// Parse voice command and return intent (NO automatic TTS - only on explicit request)
+// ElevenLabs is ONLY called for READ_SUMMARY intent to save quota
+export async function parseVoiceIntent(
+  transcript: string,
+  currentSummary?: VideoSummary,
+  awaitingConfirmation?: { type: string } | null
+): Promise<CommandAnalysis> {
+  const lower = transcript.toLowerCase().trim();
 
-  // Extract URL from command
+  // If awaiting confirmation, check for yes/no first
+  if (awaitingConfirmation) {
+    if (lower.match(/^(yes|yeah|yep|confirm|do it|proceed|okay|ok|sure)$/)) {
+      return {
+        intent: "CONFIRM_YES",
+        response: "Confirmed",
+      };
+    }
+    if (lower.match(/^(no|nope|cancel|stop|never mind|nevermind)$/)) {
+      return {
+        intent: "CANCEL_DELETE",
+        response: "Cancelled",
+      };
+    }
+  }
+
+  // ANALYZE_VIDEO: Extract URL and process
   const urlMatch = transcript.match(
     /(https?:\/\/[^\s]+)|(youtu\.?be[^\s]+)|(youtube\.com[^\s]+)/i
   );
@@ -561,86 +596,113 @@ export async function analyzeCommand(
     if (!url.startsWith("http")) {
       url = "https://" + url;
     }
-    return processYoutubeLink(url);
-  }
-
-  // Command intent matching
-  if (lower.match(/analyze|summarize|process|check out|look at/)) {
     return {
-      success: true,
-      message: "Please provide a YouTube URL to analyze.",
-      analysis: {
-        intent: "analyze_url",
-        response: "Please provide a YouTube URL to analyze.",
-      },
+      intent: "ANALYZE_VIDEO",
+      url,
+      videoId: extractVideoId(url) || undefined,
+      response: "Analyzing video",
     };
   }
 
-  if (lower.match(/read.*summary|read it|read.*to me|speak|say.*summary/)) {
+  // READ_SUMMARY: This is the ONLY intent that triggers ElevenLabs
+  if (
+    lower.match(
+      /read.*summary|read it|read.*to me|speak|say.*summary|read this/
+    )
+  ) {
     return {
-      success: true,
-      message: "Which summary would you like me to read?",
-      analysis: {
-        intent: "read_summary",
-        response: "Which summary would you like me to read?",
-      },
+      intent: "READ_SUMMARY",
+      response: currentSummary ? "Reading summary" : "No summary loaded",
     };
   }
 
-  if (lower.match(/save|store|keep/)) {
+  // SAVE_VIDEO
+  if (lower.match(/save|store|keep|bookmark/)) {
     return {
-      success: true,
-      message: "I'll save the current summary to your library.",
-      analysis: {
-        intent: "save",
-        response: "Saving to library.",
-      },
+      intent: "SAVE_VIDEO",
+      response: currentSummary ? "Saving" : "No video to save",
     };
   }
 
-  if (lower.match(/list|show|my videos|saved|library|recent/)) {
+  // LIST_VIDEOS
+  if (lower.match(/list|show.*video|my videos|saved|library|recent/)) {
     return {
-      success: true,
-      message: "Showing your saved videos.",
-      analysis: {
-        intent: "list",
-        response: "Here are your saved videos.",
-      },
+      intent: "LIST_VIDEOS",
+      response: "Showing saved videos",
     };
   }
 
+  // DELETE_VIDEO: Requires confirmation
   if (lower.match(/delete|remove|clear/)) {
     return {
-      success: true,
-      message: "Which video would you like to delete?",
-      analysis: {
-        intent: "delete",
-        response: "Which video would you like to delete?",
-      },
+      intent: "DELETE_VIDEO",
+      response: "Are you sure?",
+      requiresConfirmation: true,
     };
   }
 
+  // PLAY_VIDEO: Open in YouTube
+  if (lower.match(/play|watch|open.*video/)) {
+    return {
+      intent: "PLAY_VIDEO",
+      response: "Opening video",
+    };
+  }
+
+  // GREETING
   if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
     return {
-      success: true,
-      message:
-        "Hello! Paste a YouTube link to analyze, or ask me about your saved videos.",
-      analysis: {
-        intent: "greeting",
-        response: "Hello! Ready to help.",
-      },
+      intent: "GREETING",
+      response: "Ready",
     };
   }
 
-  // Unclear intent
+  // Default: unclear
+  return {
+    intent: "UNCLEAR",
+    response: "Say: read summary, save, list, delete, or paste a link",
+  };
+}
+
+// Legacy handler - now delegates to parseVoiceIntent
+// Kept for backward compatibility but TTS is NOT auto-generated
+export async function handleVoiceCommand(
+  transcript: string,
+  currentSummary?: VideoSummary
+): Promise<ActionResult> {
+  const analysis = await parseVoiceIntent(transcript, currentSummary, null);
+
+  // Only generate TTS for READ_SUMMARY intent (explicit user request)
+  if (analysis.intent === "READ_SUMMARY" && currentSummary) {
+    const audio = await generateSpeech(
+      `${
+        currentSummary.title
+      }. Key takeaways: ${currentSummary.keyTakeaways.join(". ")}. ${
+        currentSummary.abstract
+      }`
+    );
+    return {
+      success: true,
+      message: "Reading summary...",
+      audio,
+      analysis,
+    };
+  }
+
+  // For ANALYZE_VIDEO, actually process the video
+  if (analysis.intent === "ANALYZE_VIDEO" && analysis.url) {
+    const result = await processYoutubeLink(analysis.url);
+    return {
+      ...result,
+      analysis,
+    };
+  }
+
+  // For all other intents, just return the analysis (no TTS)
   return {
     success: true,
-    message:
-      "Paste a YouTube link to analyze, or ask me about your saved videos.",
-    analysis: {
-      intent: "unclear",
-      response: "Paste a YouTube link or ask a question.",
-    },
+    message: analysis.response,
+    analysis,
   };
 }
 
@@ -659,7 +721,8 @@ export async function generateSpeech(
     console.log("Generating speech with ElevenLabs...");
 
     // Truncate text to avoid quota issues
-    const truncatedText = text.length > 500 ? text.substring(0, 500) + "..." : text;
+    const truncatedText =
+      text.length > 500 ? text.substring(0, 500) + "..." : text;
 
     const response = await fetch(
       "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
@@ -758,6 +821,49 @@ export async function signUp(email: string, password: string) {
     success: true,
     message: "Check your email to confirm your account!",
   };
+}
+
+// Delete video by ID (for voice commands)
+export async function deleteContentById(id: string): Promise<ActionResult> {
+  try {
+    const supabase = await createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return {
+        success: false,
+        message: "You must be logged in to delete content.",
+      };
+    }
+
+    const { error } = await supabase
+      .from("saved_content")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Supabase delete error:", error);
+      return {
+        success: false,
+        message: "Failed to delete video.",
+      };
+    }
+
+    return {
+      success: true,
+      message: "Video deleted successfully!",
+    };
+  } catch (error) {
+    console.error("Delete content error:", error);
+    return {
+      success: false,
+      message: "Failed to delete content.",
+    };
+  }
 }
 
 export async function signOut() {

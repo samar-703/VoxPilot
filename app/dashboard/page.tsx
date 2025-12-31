@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
 import {
   processYoutubeLink,
   parseVoiceIntent,
@@ -59,6 +60,7 @@ type OrbState = "idle" | "listening" | "processing" | "speaking" | "confirming";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { setTheme } = useTheme();
 
   // User state
   const [user, setUser] = useState<{ email: string } | null>(null);
@@ -544,6 +546,63 @@ export default function DashboardPage() {
           break;
         }
 
+        case "SWITCH_LIGHT_MODE": {
+          setTheme("light");
+          showStatus("Switched to light mode");
+          setOrbState("processing");
+
+          try {
+            const audio = await speakResponse("Switched to light mode.");
+            if (audio) {
+              playAudio(audio);
+            } else {
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("Theme switch TTS error:", error);
+            setOrbState("idle");
+          }
+          break;
+        }
+
+        case "SWITCH_DARK_MODE": {
+          setTheme("dark");
+          showStatus("Switched to dark mode");
+          setOrbState("processing");
+
+          try {
+            const audio = await speakResponse("Switched to dark mode.");
+            if (audio) {
+              playAudio(audio);
+            } else {
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("Theme switch TTS error:", error);
+            setOrbState("idle");
+          }
+          break;
+        }
+
+        case "SWITCH_SYSTEM_MODE": {
+          setTheme("system");
+          showStatus("Switched to system mode");
+          setOrbState("processing");
+
+          try {
+            const audio = await speakResponse("Switched to system mode.");
+            if (audio) {
+              playAudio(audio);
+            } else {
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("Theme switch TTS error:", error);
+            setOrbState("idle");
+          }
+          break;
+        }
+
         case "UNCLEAR":
         default: {
           showStatus("Say: read summary, save, delete, or paste a link");
@@ -552,7 +611,14 @@ export default function DashboardPage() {
         }
       }
     },
-    [currentVideo, savedVideos, awaitingConfirmation, showStatus, playAudio]
+    [
+      currentVideo,
+      savedVideos,
+      awaitingConfirmation,
+      showStatus,
+      playAudio,
+      setTheme,
+    ]
   );
 
   const handleAnalyze = useCallback(
@@ -1123,8 +1189,8 @@ export default function DashboardPage() {
           </div>
 
           {/* Sidebar - Saved Videos */}
-          <div className="lg:col-span-1">
-            <Card className="border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.03] h-full">
+          <div className="lg:col-span-1 lg:self-start lg:sticky lg:top-24">
+            <Card className="border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.03]">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg flex items-center gap-2">
                   <IconBookmark size={18} />

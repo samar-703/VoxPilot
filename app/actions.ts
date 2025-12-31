@@ -41,7 +41,8 @@ export type Intent =
   | "CANCEL_DELETE"
   | "SWITCH_LIGHT_MODE"
   | "SWITCH_DARK_MODE"
-  | "SWITCH_SYSTEM_MODE";
+  | "SWITCH_SYSTEM_MODE"
+  | "SUMMARIZE_INPUT";
 
 export interface CommandAnalysis {
   intent: Intent;
@@ -573,9 +574,7 @@ export async function parseVoiceIntent(
 ): Promise<CommandAnalysis> {
   const lower = transcript.toLowerCase().trim();
 
-  // If awaiting confirmation, check for yes/no first
   if (awaitingConfirmation) {
-    // Match yes/no anywhere in the transcript (less strict for voice recognition)
     if (lower.match(/\b(yes|yeah|yep|confirm|do it|proceed|okay|ok|sure)\b/)) {
       return {
         intent: "CONFIRM_YES",
@@ -617,6 +616,18 @@ export async function parseVoiceIntent(
     return {
       intent: "READ_SUMMARY",
       response: currentSummary ? "Reading summary" : "No summary loaded",
+    };
+  }
+
+  // SUMMARIZE_INPUT: Analyze video from input field
+  if (
+    lower.match(
+      /summarize|summarise|analyze|analyse|process|this video|the video/
+    )
+  ) {
+    return {
+      intent: "SUMMARIZE_INPUT",
+      response: "Analyzing video from input",
     };
   }
 

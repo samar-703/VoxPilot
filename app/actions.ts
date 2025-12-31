@@ -630,10 +630,28 @@ export async function parseVoiceIntent(
     };
   }
 
+  // SAVE_VIDEO - Check BEFORE SUMMARIZE_INPUT to avoid false matches
+  if (lower.match(/^save|store|keep|bookmark/)) {
+    return {
+      intent: "SAVE_VIDEO",
+      response: currentSummary ? "Saving" : "No video to save",
+    };
+  }
+
+  // DELETE_VIDEO: Requires confirmation - Check BEFORE SUMMARIZE_INPUT
+  if (lower.match(/^delete|remove|clear/)) {
+    return {
+      intent: "DELETE_VIDEO",
+      response: "Are you sure?",
+      requiresConfirmation: true,
+    };
+  }
+
   // SUMMARIZE_INPUT: Analyze video from input field
+  // More specific patterns to avoid matching "save this video"
   if (
     lower.match(
-      /summarize|summarise|analyze|analyse|process|this video|the video/
+      /^summarize|^summarise|^analyze|^analyse|^process|summarize this|summarise this|analyze this|analyse this/
     )
   ) {
     return {
@@ -642,28 +660,11 @@ export async function parseVoiceIntent(
     };
   }
 
-  // SAVE_VIDEO
-  if (lower.match(/save|store|keep|bookmark/)) {
-    return {
-      intent: "SAVE_VIDEO",
-      response: currentSummary ? "Saving" : "No video to save",
-    };
-  }
-
   // LIST_VIDEOS
   if (lower.match(/list|show.*video|my videos|saved|library|recent/)) {
     return {
       intent: "LIST_VIDEOS",
       response: "Showing saved videos",
-    };
-  }
-
-  // DELETE_VIDEO: Requires confirmation
-  if (lower.match(/delete|remove|clear/)) {
-    return {
-      intent: "DELETE_VIDEO",
-      response: "Are you sure?",
-      requiresConfirmation: true,
     };
   }
 

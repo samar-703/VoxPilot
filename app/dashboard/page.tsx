@@ -213,6 +213,65 @@ export default function DashboardPage() {
           break;
         }
 
+        case "SUMMARIZE_INPUT": {
+          // Analyze video from input field (voice triggered)
+          const urlFromInput = inputValue.trim();
+          if (!urlFromInput) {
+            showStatus("Please paste a YouTube URL first");
+            setOrbState("idle");
+            return;
+          }
+
+          // Check if it's a valid YouTube URL
+          if (!urlFromInput.match(/(youtube\.com|youtu\.be)/i)) {
+            showStatus("Please paste a valid YouTube URL");
+            setOrbState("idle");
+            return;
+          }
+
+          setIsAnalyzing(true);
+          setOrbState("processing");
+          showStatus("Analyzing video...");
+
+          try {
+            const result = await processYoutubeLink(urlFromInput);
+            if (result.success && result.summary) {
+              setCurrentVideo({
+                url: urlFromInput,
+                videoId: result.analysis?.videoId || "",
+                summary: result.summary,
+              });
+              showStatus("Video summarized!");
+              setInputValue("");
+
+              // Ask user if they want it read aloud
+              try {
+                const audio = await speakResponse(
+                  "Video summarized. Want me to read it for you?"
+                );
+                if (audio) {
+                  playAudio(audio);
+                } else {
+                  setOrbState("idle");
+                }
+              } catch (ttsError) {
+                console.error("TTS error:", ttsError);
+                setOrbState("idle");
+              }
+            } else {
+              showStatus(result.message);
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("Analysis error:", error);
+            showStatus("Failed to analyze video");
+            setOrbState("idle");
+          } finally {
+            setIsAnalyzing(false);
+          }
+          break;
+        }
+
         case "SAVE_VIDEO": {
           if (!currentVideo) {
             showStatus("No video to save");
@@ -618,6 +677,7 @@ export default function DashboardPage() {
       showStatus,
       playAudio,
       setTheme,
+      inputValue,
     ]
   );
 

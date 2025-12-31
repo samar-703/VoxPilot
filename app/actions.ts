@@ -42,7 +42,9 @@ export type Intent =
   | "SWITCH_LIGHT_MODE"
   | "SWITCH_DARK_MODE"
   | "SWITCH_SYSTEM_MODE"
-  | "SUMMARIZE_INPUT";
+  | "SUMMARIZE_INPUT"
+  | "FOLLOW_UP_QUESTION"
+  | "READ_ANSWER";
 
 export interface CommandAnalysis {
   intent: Intent;
@@ -60,6 +62,14 @@ export interface ActionResult {
   analysis?: CommandAnalysis;
   summary?: VideoSummary;
   savedContent?: SavedContent;
+  transcript?: string;
+}
+
+export interface FollowUpResult {
+  success: boolean;
+  answer: string;
+  confidence: "high" | "low";
+  disclaimer?: string;
 }
 
 interface VideoMetadata {
@@ -401,6 +411,7 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
           : "Inferred from metadata"
       })`,
       summary,
+      transcript: transcriptResult.success ? transcriptResult.text : undefined,
       analysis: {
         intent: "ANALYZE_VIDEO",
         url,
@@ -688,6 +699,34 @@ export async function parseVoiceIntent(
     };
   }
 
+  // READ_ANSWER: User explicitly wants to hear the last answer
+  if (lower.match(/read.*answer|read it|say.*answer|speak.*answer/)) {
+    return {
+      intent: "READ_ANSWER",
+      response: "Reading answer",
+    };
+  }
+
+  // FOLLOW_UP_QUESTION: Contextual questions about the current video
+  // Must be asked as a question (contains question words or question mark)
+  // Also check for common follow-up phrases
+  const isQuestion =
+    lower.match(
+      /^(what|who|why|how|when|where|which|can you|could you|tell me|explain|describe)/
+    ) ||
+    lower.includes("?") ||
+    lower.match(/about (the|this|that|his|her|their)/) ||
+    lower.match(/(did|does|do|is|are|was|were) (he|she|they|it|the)/) ||
+    lower.match(/more (about|detail|info)/);
+
+  if (isQuestion && currentSummary) {
+    return {
+      intent: "FOLLOW_UP_QUESTION",
+      question: transcript.trim(),
+      response: "Let me answer that",
+    };
+  }
+
   // GREETING
   if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
     return {
@@ -802,6 +841,190 @@ export async function generateSpeech(
 // Generate short voice response for common interactions (keeps API usage minimal)
 export async function speakResponse(text: string): Promise<string | undefined> {
   return await generateSpeech(text);
+}
+
+// Generate speech with confidence-adjusted voice settings
+export async function generateSpeechWithConfidence(
+  text: string,
+  confidence: "high" | "low"
+): Promise<string | undefined> {
+  const apiKey = process.env.ELEVEN_LABS_API_KEY;
+
+  if (!apiKey) {
+    console.warn("ElevenLabs API key not configured");
+    return undefined;
+  }
+
+  try {
+    console.log(
+      `Generating ${confidence}-confidence speech with ElevenLabs...`
+    );
+
+    const truncatedText =
+      text.length > 500 ? text.substring(0, 500) + "..." : text;
+
+    // Adjust voice settings based on confidence
+    // High confidence: more stable, assertive tone
+    // Low confidence: softer, more hesitant tone
+    const voiceSettings =
+      confidence === "high"
+        ? { stability: 0.6, similarity_boost: 0.8 }
+        : { stability: 0.35, similarity_boost: 0.6 };
+
+    const response = await fetch(
+      "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
+      {
+        method: "POST",
+        headers: {
+          Accept: "audio/mpeg",
+          "Content-Type": "application/json",
+          "xi-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          text: truncatedText,
+          model_id: "eleven_multilingual_v2",
+          voice_settings: voiceSettings,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("ElevenLabs error:", response.status, errorText);
+      return undefined;
+    }
+
+    console.log(`✓ ElevenLabs ${confidence}-confidence audio generated`);
+    const audioBuffer = await response.arrayBuffer();
+    const base64Audio = Buffer.from(audioBuffer).toString("base64");
+    return `data:audio/mpeg;base64,${base64Audio}`;
+  } catch (error) {
+    console.error("ElevenLabs TTS error:", error);
+    return undefined;
+  }
+}
+
+// Answer follow-up questions using video context
+export async function answerFollowUpQuestion(
+  question: string,
+  summary: VideoSummary,
+  transcript?: string
+): Promise<FollowUpResult> {
+  console.log("=== Answering Follow-up Question ===");
+  console.log("Question:", question);
+  console.log("Has transcript:", !!transcript);
+
+  // Check if Gemini is temporarily disabled
+  const now = Date.now();
+  if (now < geminiDisabledUntil) {
+    return {
+      success: false,
+      answer: "AI service temporarily unavailable. Please try again.",
+      confidence: "low",
+    };
+  }
+
+  if (!process.env.GOOGLE_API_KEY) {
+    return {
+      success: false,
+      answer: "AI service not configured.",
+      confidence: "low",
+    };
+  }
+
+  const hasTranscript = !!transcript && transcript.length > 100;
+  const confidence: "high" | "low" = hasTranscript ? "high" : "low";
+
+  try {
+    let prompt: string;
+
+    if (hasTranscript) {
+      // HIGH CONFIDENCE: We have transcript data
+      const truncatedTranscript =
+        transcript.length > 8000
+          ? transcript.substring(0, 8000) + "..."
+          : transcript;
+
+      prompt = `You are answering a follow-up question about a YouTube video. You have access to the full transcript, so answer confidently and factually.
+
+Video Title: ${summary.title}
+Video Summary: ${summary.abstract}
+
+Full Transcript:
+${truncatedTranscript}
+
+User Question: ${question}
+
+Instructions:
+- Answer the question directly and confidently based on the transcript
+- Be concise but thorough (2-4 sentences max)
+- If the transcript contains specific quotes relevant to the question, you may reference them
+- If the answer is not in the transcript, say so honestly
+- Do not add disclaimers about being an AI or about transcript accuracy
+
+Answer:`;
+    } else {
+      // LOW CONFIDENCE: No transcript, only metadata/summary
+      prompt = `You are answering a follow-up question about a YouTube video. IMPORTANT: You only have the video title and an inferred summary - you do NOT have the actual transcript.
+
+Video Title: ${summary.title}
+Inferred Summary: ${summary.abstract}
+Key Takeaways: ${summary.keyTakeaways.join("; ")}
+
+User Question: ${question}
+
+Instructions:
+- Be cautious and hedge your answer since you don't have the actual video content
+- Use phrases like "Based on what appears to be covered...", "The video likely discusses...", "It seems that..."
+- NEVER claim exact quotes or specific statements from the video
+- Keep your answer brief (2-3 sentences)
+- Be honest about the limitations of your answer
+
+Answer:`;
+    }
+
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const result = await withTimeout(
+      model.generateContent([{ text: prompt }]),
+      15000
+    );
+
+    const answer = result.response.text().trim();
+
+    console.log(`✓ Follow-up answer generated (${confidence} confidence)`);
+
+    return {
+      success: true,
+      answer,
+      confidence,
+      disclaimer: !hasTranscript
+        ? "Note: This answer is based on inferred information, not the actual video transcript."
+        : undefined,
+    };
+  } catch (error) {
+    console.error("Follow-up question error:", error);
+
+    // Handle rate limiting
+    if (
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 429
+    ) {
+      geminiDisabledUntil = Date.now() + 60000;
+      return {
+        success: false,
+        answer: "AI service rate limited. Please try again in a minute.",
+        confidence: "low",
+      };
+    }
+
+    return {
+      success: false,
+      answer: "Sorry, I couldn't answer that question right now.",
+      confidence: "low",
+    };
+  }
 }
 
 // Read summary aloud (explicit user action only)

@@ -12,11 +12,14 @@ import {
   deleteContent,
   readSummaryAloud,
   speakResponse,
+  answerFollowUpQuestion,
+  generateSpeechWithConfidence,
   signOut,
   getUser,
   type VideoSummary,
   type SavedContent,
   type Intent,
+  type FollowUpResult,
 } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,9 +77,11 @@ export default function DashboardPage() {
     url: string;
     videoId: string;
     summary: VideoSummary;
+    transcript?: string;
   } | null>(null);
   const [savedVideos, setSavedVideos] = useState<SavedContent[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(true);
+  const [lastAnswer, setLastAnswer] = useState<FollowUpResult | null>(null);
 
   // Voice state
   const [orbState, setOrbState] = useState<OrbState>("idle");
@@ -146,7 +151,7 @@ export default function DashboardPage() {
   const executeAction = useCallback(
     async (
       intent: Intent,
-      context?: { url?: string; video?: SavedContent }
+      context?: { url?: string; video?: SavedContent; question?: string }
     ) => {
       console.log("Executing intent:", intent, context);
 
@@ -170,6 +175,7 @@ export default function DashboardPage() {
                 url: context.url,
                 videoId: videoId || "",
                 summary: result.summary,
+                transcript: result.transcript,
               });
               showStatus("Video analyzed!");
             } else {
@@ -240,6 +246,7 @@ export default function DashboardPage() {
                 url: urlFromInput,
                 videoId: result.analysis?.videoId || "",
                 summary: result.summary,
+                transcript: result.transcript,
               });
               showStatus("Video summarized!");
               setInputValue("");
@@ -586,6 +593,93 @@ export default function DashboardPage() {
           break;
         }
 
+        case "FOLLOW_UP_QUESTION": {
+          if (!currentVideo) {
+            showStatus("Please analyze a video first");
+            setOrbState("idle");
+            return;
+          }
+
+          const question = context?.question;
+          if (!question) {
+            showStatus("No question detected");
+            setOrbState("idle");
+            return;
+          }
+
+          setOrbState("processing");
+          showStatus("Thinking...");
+
+          try {
+            const result = await answerFollowUpQuestion(
+              question,
+              currentVideo.summary,
+              currentVideo.transcript
+            );
+
+            setLastAnswer(result);
+
+            if (result.success) {
+              // Show answer as status (truncated for display)
+              const displayAnswer =
+                result.answer.length > 100
+                  ? result.answer.substring(0, 100) + "..."
+                  : result.answer;
+              showStatus(displayAnswer);
+
+              // Log full answer to console
+              console.log("Follow-up answer:", result.answer);
+              console.log("Confidence:", result.confidence);
+              if (result.disclaimer) {
+                console.log("Disclaimer:", result.disclaimer);
+              }
+            } else {
+              showStatus(result.answer);
+            }
+          } catch (error) {
+            console.error("Follow-up question error:", error);
+            showStatus("Failed to answer question");
+          }
+
+          setOrbState("idle");
+          break;
+        }
+
+        case "READ_ANSWER": {
+          if (!lastAnswer) {
+            showStatus("No answer to read. Ask a question first.");
+            setOrbState("idle");
+            return;
+          }
+
+          setOrbState("processing");
+          showStatus("Reading answer...");
+
+          try {
+            // Use confidence-adjusted voice
+            const textToRead = lastAnswer.disclaimer
+              ? `${lastAnswer.disclaimer} ${lastAnswer.answer}`
+              : lastAnswer.answer;
+
+            const audio = await generateSpeechWithConfidence(
+              textToRead,
+              lastAnswer.confidence
+            );
+
+            if (audio) {
+              playAudio(audio);
+            } else {
+              showStatus("TTS unavailable");
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("Read answer TTS error:", error);
+            showStatus("Failed to read answer");
+            setOrbState("idle");
+          }
+          break;
+        }
+
         case "GREETING": {
           showStatus("Hello! Ready for commands.");
           setOrbState("processing");
@@ -678,6 +772,7 @@ export default function DashboardPage() {
       playAudio,
       setTheme,
       inputValue,
+      lastAnswer,
     ]
   );
 
@@ -800,6 +895,7 @@ export default function DashboardPage() {
         await executeAction(analysis.intent, {
           url: analysis.url,
           video: awaitingConfirmation?.video,
+          question: analysis.question,
         });
 
         setTranscript("");

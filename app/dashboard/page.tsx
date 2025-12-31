@@ -593,6 +593,32 @@ export default function DashboardPage() {
           break;
         }
 
+        case "COUNT_VIDEOS": {
+          const count = savedVideos.length;
+          const message =
+            count === 0
+              ? "You don't have any saved videos yet."
+              : count === 1
+              ? "You have 1 video saved in your library."
+              : `You have ${count} videos saved in your library.`;
+
+          showStatus(message);
+          setOrbState("processing");
+
+          try {
+            const audio = await speakResponse(message);
+            if (audio) {
+              playAudio(audio);
+            } else {
+              setOrbState("idle");
+            }
+          } catch (error) {
+            console.error("Count videos TTS error:", error);
+            setOrbState("idle");
+          }
+          break;
+        }
+
         case "FOLLOW_UP_QUESTION": {
           if (!currentVideo) {
             showStatus("Please analyze a video first");

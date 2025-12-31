@@ -38,7 +38,10 @@ export type Intent =
   | "GREETING"
   | "UNCLEAR"
   | "CONFIRM_YES"
-  | "CANCEL_DELETE";
+  | "CANCEL_DELETE"
+  | "SWITCH_LIGHT_MODE"
+  | "SWITCH_DARK_MODE"
+  | "SWITCH_SYSTEM_MODE";
 
 export interface CommandAnalysis {
   intent: Intent;
@@ -647,6 +650,30 @@ export async function parseVoiceIntent(
     return {
       intent: "PLAY_VIDEO",
       response: "Opening video",
+    };
+  }
+
+  // SWITCH_LIGHT_MODE: Switch to light theme
+  if (lower.match(/light\s*mode|switch.*light|enable.*light|turn.*light/)) {
+    return {
+      intent: "SWITCH_LIGHT_MODE",
+      response: "Switching to light mode",
+    };
+  }
+
+  // SWITCH_DARK_MODE: Switch to dark theme
+  if (lower.match(/dark\s*mode|switch.*dark|enable.*dark|turn.*dark/)) {
+    return {
+      intent: "SWITCH_DARK_MODE",
+      response: "Switching to dark mode",
+    };
+  }
+
+  // SWITCH_SYSTEM_MODE: Switch to system theme
+  if (lower.match(/system\s*mode|switch.*system|auto.*mode|automatic.*mode/)) {
+    return {
+      intent: "SWITCH_SYSTEM_MODE",
+      response: "Switching to system mode",
     };
   }
 

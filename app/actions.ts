@@ -44,7 +44,8 @@ export type Intent =
   | "SWITCH_SYSTEM_MODE"
   | "SUMMARIZE_INPUT"
   | "FOLLOW_UP_QUESTION"
-  | "READ_ANSWER";
+  | "READ_ANSWER"
+  | "COUNT_VIDEOS";
 
 export interface CommandAnalysis {
   intent: Intent;
@@ -657,6 +658,14 @@ export async function parseVoiceIntent(
     return {
       intent: "SUMMARIZE_INPUT",
       response: "Analyzing video from input",
+    };
+  }
+
+  // COUNT_VIDEOS: Count how many videos are saved
+  if (lower.match(/how many|count|total.*video|number of video/)) {
+    return {
+      intent: "COUNT_VIDEOS",
+      response: "Counting videos",
     };
   }
 

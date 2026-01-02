@@ -138,7 +138,7 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Load saved video into view
+  
   const handleLoadSaved = useCallback((saved: SavedContent) => {
     setCurrentVideo({
       url: saved.url,
@@ -147,7 +147,7 @@ export default function DashboardPage() {
     });
   }, []);
 
-  // UNIFIED ACTION HANDLER - Voice & UI parity
+  
   const executeAction = useCallback(
     async (
       intent: Intent,
@@ -193,7 +193,6 @@ export default function DashboardPage() {
         }
 
         case "READ_SUMMARY": {
-          // ElevenLabs TTS - ONLY called here on explicit user request
           const summary = currentVideo?.summary;
           if (!summary) {
             showStatus("No summary loaded");
@@ -220,7 +219,6 @@ export default function DashboardPage() {
         }
 
         case "SUMMARIZE_INPUT": {
-          // Analyze video from input field (voice triggered)
           const urlFromInput = inputValue.trim();
           if (!urlFromInput) {
             showStatus("Please paste a YouTube URL first");
@@ -228,7 +226,6 @@ export default function DashboardPage() {
             return;
           }
 
-          // Check if it's a valid YouTube URL
           if (!urlFromInput.match(/(youtube\.com|youtu\.be)/i)) {
             showStatus("Please paste a valid YouTube URL");
             setOrbState("idle");
@@ -251,7 +248,6 @@ export default function DashboardPage() {
               showStatus("Video summarized!");
               setInputValue("");
 
-              // Ask user if they want it read aloud
               try {
                 const audio = await speakResponse(
                   "Video summarized. Want me to read it for you?"
@@ -299,7 +295,7 @@ export default function DashboardPage() {
               const saved = await getSavedContent();
               setSavedVideos(saved);
 
-              // Speak confirmation
+              
               try {
                 const audio = await speakResponse("Video saved.");
                 if (audio) {
@@ -330,7 +326,6 @@ export default function DashboardPage() {
             setOrbState("processing");
             showStatus("Confirm deletion? Say yes or no.");
 
-            // Helper to start listening for confirmation
             const startConfirmListening = () => {
               if (typeof window === "undefined") return;
               const SR =
@@ -385,7 +380,6 @@ export default function DashboardPage() {
               };
 
               rec.onend = () => {
-                // Stay in confirming state so user can click mic again if needed
               };
 
               recognitionRef.current = rec;
@@ -419,7 +413,6 @@ export default function DashboardPage() {
               setOrbState("processing");
               showStatus("Confirm deletion? Say yes or no.");
 
-              // Helper to start listening for confirmation
               const startConfirmListening = () => {
                 if (typeof window === "undefined") return;
                 const SR =
@@ -472,7 +465,6 @@ export default function DashboardPage() {
                 };
 
                 rec.onend = () => {
-                  // Stay in confirming state
                 };
 
                 recognitionRef.current = rec;
@@ -682,7 +674,6 @@ export default function DashboardPage() {
           showStatus("Reading answer...");
 
           try {
-            // Use confidence-adjusted voice
             const textToRead = lastAnswer.disclaimer
               ? `${lastAnswer.disclaimer} ${lastAnswer.answer}`
               : lastAnswer.answer;
@@ -711,7 +702,6 @@ export default function DashboardPage() {
           setOrbState("processing");
 
           try {
-            // Short greeting to save API quota
             const audio = await speakResponse("Hello! Ready.");
             if (audio) {
               playAudio(audio);
@@ -806,7 +796,6 @@ export default function DashboardPage() {
     async (input: string) => {
       if (!input.trim()) return;
 
-      // Check if it's a YouTube URL
       const isUrl = input.match(/(youtube\.com|youtu\.be)/i);
       if (isUrl) {
         await executeAction("ANALYZE_VIDEO", { url: input });
@@ -844,7 +833,6 @@ export default function DashboardPage() {
     }
   }, [videoToDelete, showStatus]);
 
-  // Read summary aloud (for button click - reads specific summary)
   const handleReadSummary = useCallback(
     async (summary: VideoSummary) => {
       setOrbState("processing");
@@ -908,7 +896,6 @@ export default function DashboardPage() {
         console.log("Voice input (final):", text);
         setOrbState("processing");
 
-        // Parse intent using server action (Gemini can be used here for complex cases)
         const analysis = await parseVoiceIntent(
           text,
           currentVideo?.summary,

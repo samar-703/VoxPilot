@@ -116,7 +116,7 @@ function getThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
-// Fetch transcript - returns result object instead of throwing
+
 async function fetchTranscript(videoId: string): Promise<TranscriptResult> {
   console.log("Attempting transcript fetch for:", videoId);
 
@@ -189,7 +189,7 @@ async function fetchVideoMetadata(
         url,
         title: data.title || "Untitled Video",
         channelName: data.author_name || "Unknown Channel",
-        description: "", // oEmbed doesn't provide description
+        description: "", 
       };
     }
   } catch (error) {
@@ -199,7 +199,7 @@ async function fetchVideoMetadata(
     );
   }
 
-  // Fallback metadata
+  
   return {
     videoId,
     url,
@@ -209,7 +209,7 @@ async function fetchVideoMetadata(
   };
 }
 
-// Generate summary from transcript (high confidence)
+
 async function generateTranscriptSummary(
   transcript: string,
   metadata: VideoMetadata
@@ -259,7 +259,7 @@ Return ONLY valid JSON in this exact format:
 
   const parsed = JSON.parse(jsonMatch[0]);
 
-  // Validate structure
+  
   if (
     !parsed.title ||
     !Array.isArray(parsed.keyTakeaways) ||
@@ -280,11 +280,11 @@ Return ONLY valid JSON in this exact format:
   };
 }
 
-// Generate summary from metadata only (inferred)
+
 async function generateMetadataSummary(
   metadata: VideoMetadata
 ): Promise<VideoSummary> {
-  console.log("🤖 Generating metadata-inferred summary...");
+  console.log("Generating metadata-inferred summary...");
 
   const prompt = `A user wants to analyze this YouTube video, but captions are unavailable.
 
@@ -325,7 +325,7 @@ Return ONLY valid JSON in this exact format:
 
   const parsed = JSON.parse(jsonMatch[0]);
 
-  // Validate structure
+  
   if (
     !parsed.title ||
     !Array.isArray(parsed.keyTakeaways) ||
@@ -346,7 +346,7 @@ Return ONLY valid JSON in this exact format:
   };
 }
 
-// Main video processing with fail-soft fallback
+
 export async function processYoutubeLink(url: string): Promise<ActionResult> {
   const videoId = extractVideoId(url);
 
@@ -357,7 +357,7 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
     };
   }
 
-  // Check if Gemini is temporarily disabled
+  
   const now = Date.now();
   if (now < geminiDisabledUntil) {
     return {
@@ -379,15 +379,15 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
   console.log("Video ID:", videoId);
 
   try {
-    // Step 1: Fetch metadata (always succeeds with fallback)
+    
     const metadata = await fetchVideoMetadata(videoId, url);
 
-    // Step 2: Attempt transcript fetch (non-blocking)
+    
     const transcriptResult = await fetchTranscript(videoId);
 
     let summary: VideoSummary;
 
-    // Step 3: Generate summary based on available data
+    
     if (transcriptResult.success && transcriptResult.text) {
       console.log("Path: TRANSCRIPT-BASED");
       summary = await generateTranscriptSummary(
@@ -423,7 +423,7 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
   } catch (error) {
     console.error("✗ Critical processing error:", error);
 
-    // Handle rate limiting
+    
     if (
       error &&
       typeof error === "object" &&
@@ -437,7 +437,7 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
       };
     }
 
-    // Generic failure
+    
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error occurred";
 
@@ -448,7 +448,7 @@ export async function processYoutubeLink(url: string): Promise<ActionResult> {
   }
 }
 
-// Save content to Supabase
+
 export async function saveContent(
   url: string,
   videoId: string,
@@ -503,7 +503,7 @@ export async function saveContent(
   }
 }
 
-// Get saved content
+
 export async function getSavedContent(): Promise<SavedContent[]> {
   try {
     const supabase = await createClient();
@@ -577,8 +577,6 @@ export async function deleteContent(id: string): Promise<ActionResult> {
   }
 }
 
-// Parse voice command and return intent (NO automatic TTS - only on explicit request)
-// ElevenLabs is ONLY called for READ_SUMMARY intent to save quota
 export async function parseVoiceIntent(
   transcript: string,
   currentSummary?: VideoSummary,
@@ -601,7 +599,7 @@ export async function parseVoiceIntent(
     }
   }
 
-  // ANALYZE_VIDEO: Extract URL and process
+  
   const urlMatch = transcript.match(
     /(https?:\/\/[^\s]+)|(youtu\.?be[^\s]+)|(youtube\.com[^\s]+)/i
   );
@@ -639,7 +637,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // DELETE_VIDEO: Requires confirmation - Check BEFORE SUMMARIZE_INPUT
+  
   if (lower.match(/^delete|remove|clear/)) {
     return {
       intent: "DELETE_VIDEO",
@@ -648,8 +646,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // SUMMARIZE_INPUT: Analyze video from input field
-  // More specific patterns to avoid matching "save this video"
+  
   if (
     lower.match(
       /^summarize|^summarise|^analyze|^analyse|^process|summarize this|summarise this|analyze this|analyse this/
@@ -661,7 +658,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // COUNT_VIDEOS: Count how many videos are saved
+  
   if (lower.match(/how many|count|total.*video|number of video/)) {
     return {
       intent: "COUNT_VIDEOS",
@@ -669,7 +666,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // LIST_VIDEOS
+  
   if (lower.match(/list|show.*video|my videos|saved|library|recent/)) {
     return {
       intent: "LIST_VIDEOS",
@@ -677,7 +674,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // PLAY_VIDEO: Open in YouTube
+  
   if (lower.match(/play|watch|open.*video/)) {
     return {
       intent: "PLAY_VIDEO",
@@ -685,7 +682,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // SWITCH_LIGHT_MODE: Switch to light theme
+  
   if (lower.match(/light\s*mode|switch.*light|enable.*light|turn.*light/)) {
     return {
       intent: "SWITCH_LIGHT_MODE",
@@ -693,7 +690,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // SWITCH_DARK_MODE: Switch to dark theme
+  
   if (lower.match(/dark\s*mode|switch.*dark|enable.*dark|turn.*dark/)) {
     return {
       intent: "SWITCH_DARK_MODE",
@@ -701,7 +698,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // SWITCH_SYSTEM_MODE: Switch to system theme
+  
   if (lower.match(/system\s*mode|switch.*system|auto.*mode|automatic.*mode/)) {
     return {
       intent: "SWITCH_SYSTEM_MODE",
@@ -709,7 +706,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // READ_ANSWER: User explicitly wants to hear the last answer
+  
   if (lower.match(/read.*answer|read it|say.*answer|speak.*answer/)) {
     return {
       intent: "READ_ANSWER",
@@ -717,9 +714,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // FOLLOW_UP_QUESTION: Contextual questions about the current video
-  // Must be asked as a question (contains question words or question mark)
-  // Also check for common follow-up phrases
+  
   const isQuestion =
     lower.match(
       /^(what|who|why|how|when|where|which|can you|could you|tell me|explain|describe)/
@@ -737,7 +732,7 @@ export async function parseVoiceIntent(
     };
   }
 
-  // GREETING
+  
   if (lower.match(/^(hi|hello|hey|good|greetings)/)) {
     return {
       intent: "GREETING",
@@ -745,22 +740,21 @@ export async function parseVoiceIntent(
     };
   }
 
-  // Default: unclear
+  
   return {
     intent: "UNCLEAR",
     response: "Say: read summary, save, list, delete, or paste a link",
   };
 }
 
-// Legacy handler - now delegates to parseVoiceIntent
-// Kept for backward compatibility but TTS is NOT auto-generated
+
 export async function handleVoiceCommand(
   transcript: string,
   currentSummary?: VideoSummary
 ): Promise<ActionResult> {
   const analysis = await parseVoiceIntent(transcript, currentSummary, null);
 
-  // Only generate TTS for READ_SUMMARY intent (explicit user request)
+  
   if (analysis.intent === "READ_SUMMARY" && currentSummary) {
     const audio = await generateSpeech(
       `${
@@ -777,7 +771,7 @@ export async function handleVoiceCommand(
     };
   }
 
-  // For ANALYZE_VIDEO, actually process the video
+  
   if (analysis.intent === "ANALYZE_VIDEO" && analysis.url) {
     const result = await processYoutubeLink(analysis.url);
     return {
@@ -786,7 +780,7 @@ export async function handleVoiceCommand(
     };
   }
 
-  // For all other intents, just return the analysis (no TTS)
+  
   return {
     success: true,
     message: analysis.response,
@@ -794,7 +788,7 @@ export async function handleVoiceCommand(
   };
 }
 
-// Generate speech with ElevenLabs (ONLY on explicit request)
+
 export async function generateSpeech(
   text: string
 ): Promise<string | undefined> {
@@ -808,7 +802,7 @@ export async function generateSpeech(
   try {
     console.log("Generating speech with ElevenLabs...");
 
-    // Truncate text to avoid quota issues
+    
     const truncatedText =
       text.length > 500 ? text.substring(0, 500) + "..." : text;
 
@@ -848,12 +842,10 @@ export async function generateSpeech(
   }
 }
 
-// Generate short voice response for common interactions (keeps API usage minimal)
 export async function speakResponse(text: string): Promise<string | undefined> {
   return await generateSpeech(text);
 }
 
-// Generate speech with confidence-adjusted voice settings
 export async function generateSpeechWithConfidence(
   text: string,
   confidence: "high" | "low"
@@ -873,9 +865,6 @@ export async function generateSpeechWithConfidence(
     const truncatedText =
       text.length > 500 ? text.substring(0, 500) + "..." : text;
 
-    // Adjust voice settings based on confidence
-    // High confidence: more stable, assertive tone
-    // Low confidence: softer, more hesitant tone
     const voiceSettings =
       confidence === "high"
         ? { stability: 0.6, similarity_boost: 0.8 }
@@ -914,7 +903,7 @@ export async function generateSpeechWithConfidence(
   }
 }
 
-// Answer follow-up questions using video context
+
 export async function answerFollowUpQuestion(
   question: string,
   summary: VideoSummary,
@@ -924,7 +913,7 @@ export async function answerFollowUpQuestion(
   console.log("Question:", question);
   console.log("Has transcript:", !!transcript);
 
-  // Check if Gemini is temporarily disabled
+  
   const now = Date.now();
   if (now < geminiDisabledUntil) {
     return {
@@ -949,7 +938,6 @@ export async function answerFollowUpQuestion(
     let prompt: string;
 
     if (hasTranscript) {
-      // HIGH CONFIDENCE: We have transcript data
       const truncatedTranscript =
         transcript.length > 8000
           ? transcript.substring(0, 8000) + "..."
@@ -974,7 +962,7 @@ Instructions:
 
 Answer:`;
     } else {
-      // LOW CONFIDENCE: No transcript, only metadata/summary
+      
       prompt = `You are answering a follow-up question about a YouTube video. IMPORTANT: You only have the video title and an inferred summary - you do NOT have the actual transcript.
 
 Video Title: ${summary.title}

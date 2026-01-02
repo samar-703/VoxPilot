@@ -177,9 +177,8 @@ VoxPilot/
 2. **Paste a YouTube URL** in the input field
 3. **Click Analyze** or say "Summarize this video"
 4. **View the AI-generated summary** with key takeaways
-5. **Ask follow-up questions** about the video content
-6. **Save videos** to your library for later reference
-7. **Use voice commands** for hands-free interaction
+5. **Save videos** to your library for later reference
+6. **Use voice commands** for hands-free interaction
 
 ## Voice Commands Reference
 

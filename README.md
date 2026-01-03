@@ -24,14 +24,6 @@ VoxPilot is an AI-powered voice assistant for YouTube video analysis. It allows 
   - "Switch to dark mode" or "Switch to light mode" for theme control
   - "Play" or "Watch" to open the video on YouTube
 
-### Contextual Follow-up Questions
-
-- Ask questions about the currently analyzed video
-- Examples: "What did he say about X?", "Explain this simply"
-- Answers are generated using Gemini with context from the video
-- Confidence-aware responses: factual when transcript is available, hedged when inferred
-- Say "Read the answer" to hear responses with confidence-adjusted voice tone
-
 ### Video Library
 
 - Save analyzed videos to your personal library

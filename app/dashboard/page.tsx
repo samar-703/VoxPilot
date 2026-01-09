@@ -95,6 +95,7 @@ export default function DashboardPage() {
   const [statusMessage, setStatusMessage] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [videoToDelete, setVideoToDelete] = useState<SavedContent | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1012,12 +1013,119 @@ export default function DashboardPage() {
       {/* Hidden audio element */}
       <audio ref={audioRef} className="hidden" />
 
+      {/* Collapsible Sidebar */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSidebarOpen(false)}
+              className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+            />
+            {/* Sidebar Panel */}
+            <motion.aside
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="fixed top-0 left-0 z-50 h-full w-72 bg-white dark:bg-neutral-900 border-r border-black/10 dark:border-white/10 shadow-2xl"
+            >
+              <div className="flex items-center justify-between p-4 border-b border-black/10 dark:border-white/10">
+                <div className="flex items-center gap-2">
+                  <VoxPilotLogo size={28} />
+                  <span className="font-semibold text-foreground">
+                    VoxPilot
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <IconX size={20} />
+                </Button>
+              </div>
+              <ScrollArea className="h-[calc(100%-65px)]">
+                <div className="p-4">
+                  {/* Voice Commands Section */}
+                  <div className="mb-6">
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground mb-3">
+                      <IconMicrophone size={16} />
+                      Voice Commands
+                    </h3>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Say these to control VoxPilot
+                    </p>
+                    <div className="space-y-2">
+                      {[
+                        {
+                          cmd: "Summarize this video",
+                          desc: "Analyze pasted URL",
+                        },
+                        {
+                          cmd: "Save this video",
+                          desc: "Save to your library",
+                        },
+                        {
+                          cmd: "Delete this video",
+                          desc: "Remove from library",
+                        },
+                        { cmd: "Read the summary", desc: "Hear summary aloud" },
+                        { cmd: "Switch to dark mode", desc: "Toggle theme" },
+                      ].map((item, i) => (
+                        <div
+                          key={i}
+                          className="p-2.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5"
+                        >
+                          <p className="text-sm font-medium text-foreground">
+                            &quot;{item.cmd}&quot;
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {item.desc}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <Separator className="my-4" />
+                  {/* Future sections can be added here */}
+                </div>
+              </ScrollArea>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/80 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            {/* Logo */}
+            {/* Left: Hamburger + Logo */}
             <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSidebarOpen(true)}
+                title="Open menu"
+              >
+                <svg
+                  width={20}
+                  height={20}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="4" x2="20" y1="6" y2="6" />
+                  <line x1="4" x2="20" y1="12" y2="12" />
+                  <line x1="4" x2="20" y1="18" y2="18" />
+                </svg>
+              </Button>
               <VoxPilotLogo size={32} />
               <span className="text-lg font-semibold text-foreground">
                 VoxPilot
@@ -1079,17 +1187,17 @@ export default function DashboardPage() {
               </div>
               <Button
                 variant="glow"
-                size="lg"
+                size="default"
                 onClick={() => handleAnalyze(inputValue)}
                 disabled={isAnalyzing || !inputValue.trim()}
-                className="px-6"
+                className="px-4 h-9"
               >
                 {isAnalyzing ? (
-                  <IconLoader size={20} className="animate-spin" />
+                  <IconLoader size={16} className="animate-spin" />
                 ) : (
-                  <IconSearch size={20} />
+                  <IconSearch size={16} />
                 )}
-                <span className="ml-2 hidden sm:inline">Analyze</span>
+                <span className="hidden sm:inline">Analyze</span>
               </Button>
 
               {/* Voice Input Button */}
@@ -1210,41 +1318,7 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* Content Area */}
-        <div className="grid lg:grid-cols-4 gap-6">
-          {/* Left Sidebar - Voice Commands Help */}
-          <div className="lg:col-span-1 lg:self-start lg:sticky lg:top-24">
-            <Card className="border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.03]">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <IconMicrophone size={18} />
-                  Voice Commands
-                </CardTitle>
-                <CardDescription>Say these to control VoxPilot</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {[
-                  { cmd: "Summarize this video", desc: "Analyze pasted URL" },
-                  { cmd: "Save this video", desc: "Save to your library" },
-                  { cmd: "Delete this video", desc: "Remove from library" },
-                  { cmd: "Read the summary", desc: "Hear summary aloud" },
-                  { cmd: "Switch to dark mode", desc: "Toggle theme" },
-                ].map((item, i) => (
-                  <div
-                    key={i}
-                    className="p-2.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5"
-                  >
-                    <p className="text-sm font-medium text-foreground">
-                      &quot;{item.cmd}&quot;
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {item.desc}
-                    </p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </div>
-
+        <div className="grid lg:grid-cols-3 gap-6">
           {/* Main Panel - Video & Summary */}
           <div className="lg:col-span-2">
             <AnimatePresence mode="wait">

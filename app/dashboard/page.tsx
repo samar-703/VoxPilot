@@ -138,7 +138,6 @@ export default function DashboardPage() {
     }
   }, []);
 
-  
   const handleLoadSaved = useCallback((saved: SavedContent) => {
     setCurrentVideo({
       url: saved.url,
@@ -147,7 +146,6 @@ export default function DashboardPage() {
     });
   }, []);
 
-  
   const executeAction = useCallback(
     async (
       intent: Intent,
@@ -295,7 +293,6 @@ export default function DashboardPage() {
               const saved = await getSavedContent();
               setSavedVideos(saved);
 
-              
               try {
                 const audio = await speakResponse("Video saved.");
                 if (audio) {
@@ -379,8 +376,7 @@ export default function DashboardPage() {
                 setOrbState("confirming");
               };
 
-              rec.onend = () => {
-              };
+              rec.onend = () => {};
 
               recognitionRef.current = rec;
               rec.start();
@@ -464,8 +460,7 @@ export default function DashboardPage() {
                   setOrbState("confirming");
                 };
 
-                rec.onend = () => {
-                };
+                rec.onend = () => {};
 
                 recognitionRef.current = rec;
                 rec.start();
@@ -1215,7 +1210,41 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* Content Area */}
-        <div className="grid lg:grid-cols-3 gap-6">
+        <div className="grid lg:grid-cols-4 gap-6">
+          {/* Left Sidebar - Voice Commands Help */}
+          <div className="lg:col-span-1 lg:self-start lg:sticky lg:top-24">
+            <Card className="border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/[0.03]">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <IconMicrophone size={18} />
+                  Voice Commands
+                </CardTitle>
+                <CardDescription>Say these to control VoxPilot</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {[
+                  { cmd: "Summarize this video", desc: "Analyze pasted URL" },
+                  { cmd: "Save this video", desc: "Save to your library" },
+                  { cmd: "Delete this video", desc: "Remove from library" },
+                  { cmd: "Read the summary", desc: "Hear summary aloud" },
+                  { cmd: "Switch to dark mode", desc: "Toggle theme" },
+                ].map((item, i) => (
+                  <div
+                    key={i}
+                    className="p-2.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5"
+                  >
+                    <p className="text-sm font-medium text-foreground">
+                      &quot;{item.cmd}&quot;
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {item.desc}
+                    </p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+
           {/* Main Panel - Video & Summary */}
           <div className="lg:col-span-2">
             <AnimatePresence mode="wait">

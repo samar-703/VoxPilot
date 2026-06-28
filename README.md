@@ -1,6 +1,6 @@
 # VoxPilot
 
-VoxPilot is an AI-powered voice assistant for YouTube video analysis. It allows users to paste YouTube URLs, get AI-generated summaries, and interact with the content using natural voice commands. The application leverages Google Gemini for intelligent content analysis and ElevenLabs for natural text-to-speech responses. This project is no longer limited to controlling just with voice but having complete control over entire app with just your voice n let AI handle everything 
+VoxPilot is an AI-powered voice assistant for YouTube video analysis. It allows users to paste YouTube URLs, get AI-generated summaries, and interact with the content using natural voice commands. The application leverages Google Gemini for intelligent content analysis and ElevenLabs for natural text-to-speech responses. This project is no longer limited to controlling just with voice but having complete control over entire app with just your voice n let AI handle everything. 
 
 ## Features
 
@@ -11,6 +11,7 @@ VoxPilot is an AI-powered voice assistant for YouTube video analysis. It allows 
 - Falls back to metadata-based inference when transcripts are unavailable
 - Displays confidence badges (Full or Inferred) based on data source
 - Generates key takeaways, abstracts, and structured summaries
+- More features are in pipeline 
 
 ### Voice Control
 

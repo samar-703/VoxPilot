@@ -9,7 +9,7 @@ VoxPilot is an AI-powered voice assistant for YouTube video analysis. It allows 
 - Paste any YouTube URL to analyze the video content
 - Automatically extracts transcripts when available for accurate analysis
 - Falls back to metadata-based inference when transcripts are unavailable
-- Displays confidence badges (Full or Inferred) based on data source
+- Displays confidence badges (Full or Inferred) based on data source. dtlp required 
 - Generates key takeaways, abstracts, and structured summaries
 - More features are in pipeline 
 

@@ -67,7 +67,7 @@ VoxPilot is an AI-powered voice assistant for YouTube video analysis. It allows 
 
 Before running VoxPilot locally, you will need:
 
-1. **Node.js** (v18 or higher)
+1. **Node.js** (v20 or higher)
 2. **pnpm** package manager
 3. **Supabase account** with a project set up
 4. **Google AI API key** for Gemini access
